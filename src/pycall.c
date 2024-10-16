@@ -22,7 +22,7 @@ char *pycall(PgSocket *client, char *username, char *query_str, char *py_file,
 		char* py_function) {
 	PyObject *pName = NULL, *pModule = NULL, *pFunc = NULL;
 	PyObject *pArgs = NULL, *pValue = NULL;
-	PyObject *ptype, *perror, *ptraceback, *bytes_obj, *string_obj;
+	PyObject *ptype, *perror, *ptraceback;
 	char *py_pathtmp, *py_filetmp, *py_path, *py_module, *ext;
 	char *res = NULL;
 
@@ -55,8 +55,8 @@ char *pycall(PgSocket *client, char *username, char *query_str, char *py_file,
 		ext[0] = '\0';
 
         /* Initialize the Python interpreter
-         * NOTE: This call is a no-op on subsequent calls, as we do not 
-         * call PyFinalize(). This 
+         * NOTE: This call is a no-op on subsequent calls, as we do not
+         * call PyFinalize(). This
          * a) avoids the overhead of repeatedly reloading the interpreter
          * b) allows the use of global variables for persisting data in the
          *    routing / rewriting functions between calls.
@@ -64,7 +64,7 @@ char *pycall(PgSocket *client, char *username, char *query_str, char *py_file,
 	Py_Initialize();
 
 	/* Load python module */
-	pName = PyUnicode_FromString(py_module);
+	pName = PyString_FromString(py_module);
 	if (pName == NULL) {
 		slog_error(client, "Python module <%s> did not load", py_module);
 		goto finish;
@@ -95,13 +95,13 @@ char *pycall(PgSocket *client, char *username, char *query_str, char *py_file,
 		slog_error(client, "Python module <%s>: out of memory", py_module);
 		goto finish;
 	}
-	pValue = PyUnicode_FromString(username);
+	pValue = PyString_FromString(username);
 	if (pValue == NULL) {
 		slog_error(client, "Python module <%s>: out of memory", py_module);
 		goto finish;
 	}
 	PyTuple_SetItem(pArgs, 0, pValue);
-	pValue = PyUnicode_FromString(query_str);
+	pValue = PyString_FromString(query_str);
 	if (pValue == NULL) {
 		slog_error(client, "Python module <%s>: out of memory", py_module);
 		goto finish;
@@ -113,24 +113,17 @@ char *pycall(PgSocket *client, char *username, char *query_str, char *py_file,
 				py_function);
 		goto finish;
 	}
-	if (PyUnicode_Check(pValue)) {
-            bytes_obj = PyUnicode_AsUTF8String(pValue);
-            res = strdup(PyBytes_AsString(bytes_obj));
-            Py_DECREF(bytes_obj);
-    } else {
-            res = NULL;
-    }
+	if (PyString_Check(pValue)) {
+		res = strdup(PyString_AsString(pValue));
+	} else {
+		res = NULL;
+	}
 
-    finish:
-    if (PyErr_Occurred()) {
-            PyErr_Fetch(&ptype, &perror, &ptraceback);
-            PyErr_NormalizeException(&ptype, &perror, &ptraceback);
-            string_obj = PyObject_Repr(perror);
-            bytes_obj = PyUnicode_AsUTF8String(string_obj);
-            slog_error(client, "Python error: %s", PyBytes_AsString(bytes_obj));
-            Py_DECREF(string_obj);
-            Py_DECREF(bytes_obj);
-    }
+	finish:
+	if (PyErr_Occurred()) {
+		PyErr_Fetch(&ptype, &perror, &ptraceback);
+		slog_error(client, "Python error: %s", PyString_AsString(perror));
+	}
 	free(py_pathtmp);
 	free(py_filetmp);
 	free(py_path);
