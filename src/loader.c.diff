@@ -79,14 +79,14 @@ index 55f87a8..4db4b57 100644
 +			goto oom;
 +	}
 +
-+	if (db->forced_user) {
-+		if (!force_user(new_db, db->forced_user->name, db->forced_user->passwd)) {;
++	if (db->forced_user_credentials) {
++		if (!force_user_credentials(new_db, db->forced_user_credentials->name, db->forced_user_credentials->passwd)) {;
 +			goto oom;
 +		}
 +	}
 +
 +	log_debug("creating pool for %s", new_db->name);
-+	pool = get_pool(new_db, new_db->forced_user);
++	pool = get_pool(new_db, new_db->forced_user_credentials);
 +	if (!pool) {
 +		fatal("pool could not be created for %s", new_db->name);
 +		goto oom;
@@ -159,8 +159,8 @@ index 55f87a8..4db4b57 100644
  	db->dbname = (char *)msg->buf + dbname_ofs;
  
 +	log_debug("creating pool for %s", db->name);
-+	if (db->forced_user) {
-+		PgPool *pool = get_pool(db, db->forced_user);
++	if (db->forced_user_credentials) {
++		PgPool *pool = get_pool(db, db->forced_user_credentials);
 +		if (!pool)
 +			fatal("pool could not be created for %s", db->name);
 +	}

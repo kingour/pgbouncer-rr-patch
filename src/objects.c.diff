@@ -1,6 +1,6 @@
---- a/src/objects.c	2024-10-14 14:39:34
-+++ b/src/objects.c	2024-10-14 15:12:27
-@@ -753,13 +753,18 @@ PgPool *get_pool(PgDatabase *db, PgCredentials *user_c
+--- a/src/objects.c	2024-10-16 15:09:36
++++ b/src/objects.c	2024-10-16 15:25:52
+@@ -753,14 +753,19 @@ PgPool *get_pool(PgDatabase *db, PgCredentials *user_c
  {
  	struct List *item;
  	PgPool *pool;
@@ -16,10 +16,11 @@
 +			global_writer = get_global_writer(pool);
 +			if (global_writer)
 +				return global_writer;
-+        }
  			return pool;
++        }
  	}
  
+ 	return new_pool(db, user_credentials);
 @@ -1137,6 +1142,10 @@ bool life_over(PgSocket *server)
  	usec_t last_kill = now - pool->last_lifetime_disconnect;
  	usec_t server_lifetime = pool_server_lifetime(pool);
@@ -52,7 +53,7 @@
 +			log_debug("finish_client_login: no topology query, so not using fast switchover");
 +		} else if (global_writer) {
 +			log_debug("finish_client_login: global writer is set, so let's use the cached value: %s", global_writer->db->name);
-+			if (client->pool != global_writer && !set_pool(client, global_writer->db->name, client->login_user->name, client->login_user->passwd, true)) {
++			if (client->pool != global_writer && !set_pool(client, global_writer->db->name, client->login_user_credentials->name, client->login_user_credentials->passwd, true)) {
 +				log_error("could not set pool to: %s", global_writer->db->name);
 +				return false;
 +			}

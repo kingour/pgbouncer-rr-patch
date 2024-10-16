@@ -18,11 +18,28 @@ This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS O
 #include "bouncer.h"
 #include <usual/pgutil.h>
 
+char *conv_pyStr(PgSocket *client, PyObject *pValue);
+
+char *conv_pyStr(PgSocket *client, PyObject *pValue) {
+    char *res = NULL;
+    PyObject *bytes_obj;
+    if (PyUnicode_Check(pValue)) {
+            bytes_obj = PyUnicode_AsUTF8String(pValue);
+            res = strdup(PyBytes_AsString(bytes_obj));
+            Py_DECREF(bytes_obj);
+    } else if (PyString_Check(pValue)) {
+        res = strdup(PyString_AsString(pValue));
+    } else {
+        res = NULL;
+    }
+    return res;
+}
+
 char *pycall(PgSocket *client, char *username, char *query_str, int in_transaction,
         char *py_file, char* py_function) {
 	PyObject *pName = NULL, *pModule = NULL, *pFunc = NULL;
 	PyObject *pArgs = NULL, *pValue = NULL;
-	PyObject *ptype, *perror, *ptraceback, *bytes_obj, *string_obj, *objInTransaction;
+	PyObject *ptype, *perror, *ptraceback, *string_obj, *objInTransaction;
 	char *py_file_copy, *py_module, *ext;
 	char *res = NULL;
 	int agCount = 0;
@@ -115,21 +132,14 @@ char *pycall(PgSocket *client, char *username, char *query_str, int in_transacti
 				py_function);
 		goto finish;
 	}
-	if (PyUnicode_Check(pValue)) {
-            bytes_obj = PyUnicode_AsUTF8String(pValue);
-            res = strdup(PyBytes_AsString(bytes_obj));
-            Py_DECREF(bytes_obj);
-    } else {
-            res = NULL;
-    }
+    res = conv_pyStr(client, pValue);
 
     finish:
     if (PyErr_Occurred()) {
             PyErr_Fetch(&ptype, &perror, &ptraceback);
             PyErr_NormalizeException(&ptype, &perror, &ptraceback);
             string_obj = PyObject_Repr(perror);
-            bytes_obj = PyUnicode_AsUTF8String(string_obj);
-            slog_error(client, "Python error: %s", PyBytes_AsString(bytes_obj));
+            slog_error(client, "Python error: %s", conv_pyStr(client, string_obj));
             Py_DECREF(string_obj);
     }
 	free(py_file_copy);

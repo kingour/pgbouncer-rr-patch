@@ -23,8 +23,8 @@ index 855a4c5..1e02db8 100644
 +	if (client->pool == new_pool)
 +		return true;
 +
-+	username = client->login_user->name;
-+	passwd = client->login_user->passwd;
++	username = client->login_user_credentials->name;
++	passwd = client->login_user_credentials->passwd;
 +	if (!set_pool(client, new_pool->db->name, username, passwd, true)) {
 +		log_error("could not set pool to: %s", new_pool->db->name);
 +		return false;
@@ -324,8 +324,8 @@ index 855a4c5..1e02db8 100644
  			disconnect_server(server, true, "server idle timeout");
  		} else if (age >= cf_server_lifetime) {
 @@ -801,6 +1015,7 @@ void kill_database(PgDatabase *db)
- 	if (db->forced_user)
- 		slab_free(user_cache, db->forced_user);
+ 	if (db->forced_user_credentials)
+ 		slab_free(user_cache, db->forced_user_credentials);
  	free(db->connect_query);
 +	free(db->topology_query);
  	if (db->inactive_time) {
