@@ -1,5 +1,5 @@
 diff --git a/src/server.c b/src/server.c
-index c6e5efe..49d2a6c 100644
+index c6e5efe..116e344 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -27,6 +27,123 @@
@@ -139,7 +139,7 @@ index c6e5efe..49d2a6c 100644
  
  	if (incomplete_pkt(pkt)) {
  		disconnect_server(server, true, "partial pkt in login phase");
-@@ -133,12 +256,16 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -133,12 +256,28 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  		switch (pkt->type) {
  		case PqMsg_ReadyForQuery:
  		case PqMsg_ParameterStatus:
@@ -150,13 +150,25 @@ index c6e5efe..49d2a6c 100644
  		case PqMsg_ErrorResponse:
  			/* log & ignore errors */
  			log_server_error("S: error while executing exec_on_query", pkt);
-+			// require topology table to exist in the cluster if using
-+			if (fast_switchover)
++			/*
++			 * require topology table to exist in the cluster if using fast switchover.
++			 */
++			if (fast_switchover && server->pool->db->recovery_query && is_cluster_endpoint(server->pool->db->host)) {
++				/*
++				 * During blue-green deployment, the fast switchover feature's topology query may fail if the cluster is not part of the deployment.
++				 * To handle this scenario, if the topology query encounters an error, PgBouncer will not crash; instead, it will disable the fast switchover feature.
++				 * Once the customer sets up the blue-green deployment and performs a RELOAD, the fast switchover feature will be re-enabled
++				 * if the topology query successfully finds the node during execution.
++				 */
++				fast_switchover = false;
++			} else if (fast_switchover) {
 +				fatal("does the topology table exist?");
++			}
++
  		/* fallthrough */
  		default:	/* ignore rest */
  			sbuf_prepare_skip(sbuf, pkt->len);
-@@ -152,6 +279,71 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -152,6 +291,88 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  		disconnect_server(server, true, "unknown pkt from server");
  		break;
  
@@ -196,6 +208,23 @@ index c6e5efe..49d2a6c 100644
 +				free(data);
 +				fatal("strdup: no mem for hostname");
 +			}
++			if (fast_switchover && server->pool->db->recovery_query) {
++				/*
++				 * Blue-Green Deployment Fast Switchover:
++				 * Open connections only to the specified endpoint and its green counterpart; skip all other endpoints.
++				 * Connection Pool Handling:
++				 * - For writer endpoints (e.g., used with PgBouncer), ensure a connection is established to the corresponding writer on the green cluster.
++				 * - For reader endpoints, establish a connection to the equivalent reader on the green cluster.
++				 * - Apply the same logic for custom-defined endpoints.
++				 */
++				bool should_continue = setup_connection_pool_based_on_endpoint_type(server->pool->db->host, hostname);
++				if (!should_continue) {
++					free(data);
++					free(hostname);
++					sbuf_prepare_skip(sbuf, pkt->len);
++					return true;
++				}
++			}
 +
 +			if (!strtok(endpoint, ".")) {
 +				free(data);
@@ -228,7 +257,7 @@ index c6e5efe..49d2a6c 100644
  	case PqMsg_ErrorResponse:
  		/*
  		 * If we cannot log into the server, then we drop all clients
-@@ -201,7 +393,60 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -201,7 +422,60 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  			if (!res)
  				disconnect_server(server, false, "exec_on_connect query failed");
  			break;
@@ -289,7 +318,7 @@ index c6e5efe..49d2a6c 100644
  
  		/* login ok */
  		slog_debug(server, "server login ok, start accepting queries");
-@@ -363,6 +608,8 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -363,6 +637,8 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  	bool async_response = false;
  	struct List *item, *tmp;
  	bool ignore_packet = false;
@@ -298,7 +327,7 @@ index c6e5efe..49d2a6c 100644
  
  	Assert(!server->pool->db->admin);
  
-@@ -374,6 +621,15 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -374,6 +650,15 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  
  	/* pooling decisions will be based on this packet */
  	case PqMsg_ReadyForQuery:
@@ -314,7 +343,7 @@ index c6e5efe..49d2a6c 100644
  
  		/* if partial pkt, wait */
  		if (!mbuf_get_char(&pkt->data, &state))
-@@ -461,6 +717,22 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -461,6 +746,22 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  		break;
  
  	case PqMsg_CommandComplete:
@@ -337,7 +366,7 @@ index c6e5efe..49d2a6c 100644
  		/* ErrorResponse and CommandComplete show end of copy mode */
  		if (server->copy_mode) {
  			slog_debug(server, "COPY finished");
-@@ -545,6 +817,53 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -545,6 +846,53 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  	/* data packets, there will be more coming */
  	case PqMsg_CopyData:
  	case PqMsg_DataRow:
@@ -391,7 +420,7 @@ index c6e5efe..49d2a6c 100644
  		break;
  	}
  	server->idle_tx = idle_tx;
-@@ -632,7 +951,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -632,7 +980,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  			}
  		}
  	} else {
@@ -400,7 +429,7 @@ index c6e5efe..49d2a6c 100644
  			slog_warning(server,
  				     "got packet '%c' from server when not linked",
  				     pkt_desc(pkt));
-@@ -640,6 +959,19 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -640,6 +988,19 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  		sbuf_prepare_skip(sbuf, pkt->len);
  	}
  
@@ -420,7 +449,7 @@ index c6e5efe..49d2a6c 100644
  	return true;
  }
  
-@@ -754,6 +1086,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -754,6 +1115,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  	bool res = false;
  	PgSocket *server = container_of(sbuf, PgSocket, sbuf);
  	PgPool *pool = server->pool;
@@ -428,7 +457,7 @@ index c6e5efe..49d2a6c 100644
  	PktHdr pkt;
  	char infobuf[96];
  
-@@ -768,8 +1101,18 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -768,8 +1130,18 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  	case SBUF_EV_RECV_FAILED:
  		if (server->state == SV_ACTIVE_CANCEL)
  			disconnect_server(server, false, "successfully sent cancel request");
@@ -448,7 +477,7 @@ index c6e5efe..49d2a6c 100644
  		break;
  	case SBUF_EV_SEND_FAILED:
  		disconnect_client(server->link, false, "unexpected eof");
-@@ -810,6 +1153,10 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -810,6 +1182,10 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  		break;
  	case SBUF_EV_CONNECT_FAILED:
  		Assert(server->state == SV_LOGIN);

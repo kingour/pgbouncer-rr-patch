@@ -1,11 +1,27 @@
 diff --git a/include/util.h b/include/util.h
-index f46e452..3c2d6ae 100644
+index f46e452..e052c39 100644
 --- a/include/util.h
 +++ b/include/util.h
-@@ -20,6 +20,24 @@
+@@ -20,6 +20,66 @@
  #include <usual/string.h>
  #include <usual/cfparser.h>
  
++// Define constants for cluster patterns
++#define CLUSTER_PREFIX       "cluster"
++#define CLUSTER_DASH_PREFIX  "cluster-"
++#define CLUSTER_RO_PREFIX    "cluster-ro-"
++#define CLUSTER_RO          "cluster-ro"
++#define CLUSTER_CUSTOM      "cluster-custom"
++#define CLUSTER_GREEN_TAG   "-green-"
++#define MAX_ENDPOINT_LENGTH 1024
++
++typedef enum {
++    HOST_CLUSTER_ENDPOINT_TYPE_NONE,
++    HOST_CLUSTER_ENDPOINT_TYPE_WRITER,
++    HOST_CLUSTER_ENDPOINT_TYPE_READER_ONLY,
++    HOST_CLUSTER_ENDPOINT_TYPE_CUSTOM
++} HostClusterEndPointType;
++
 +/*
 + * sets the global writer to NULL for the pool
 + */
@@ -23,6 +39,32 @@ index f46e452..3c2d6ae 100644
 + * 2. fast switchover flag is enabled
 + */
 +bool is_fast_switchover_disabled_for_pool(PgPool *pool);
++
++/*
++ * Determine the type of cluster endpoint (reader, writer, or custom) configured by the customer.
++ * Based on the type, create a connection pool for the corresponding endpoint on the target cluster:
++ *   - If the customer has configured a read-only endpoint, create a pool for the read endpoint of the target cluster.
++ *   - If the customer has configured a writer endpoint, create a pool for the writer endpoint of the target cluster.
++ *   - If it is a custom endpoint, create a pool for the corresponding custom endpoint of the target cluster.
++ */
++bool setup_connection_pool_based_on_endpoint_type(char *hostName, char *endpoint);
++
++/*
++ * If the connection is established through the cluster reader endpoint,
++ * append the 'ro' suffix to the endpoint string to form the target read-only endpoint
++ * before establishing the connection in the pool.
++ */
++bool append_ro_suffix_to_cluster_reader_endpoint(char* endpoint, size_t endpoint_size);
++
++/*
++ * Determines whether the given endpoint belong to a cluster Host.
++ */
++bool is_cluster_endpoint(char* endpoint);
++
++/*
++ * Splits the given endpoint string into database name and DNS name components.
++ */
++bool split_dbname_and_dnsname(char *endpoint, char **db_name, char **dns_name);
 +
  /*
   * logging about specific socket
