@@ -1,5 +1,5 @@
 diff --git a/src/util.c b/src/util.c
-index fad0172..d175376 100644
+index fad0172..af5c802 100644
 --- a/src/util.c
 +++ b/src/util.c
 @@ -32,6 +32,33 @@
@@ -45,8 +45,8 @@ index fad0172..d175376 100644
 +	return !pool->db->topology_query || !fast_switchover;
 +}
 +
-+bool setup_connection_pool_based_on_endpoint_type(char *hostName, char *endpoint) {
-+	if (!hostName || !endpoint)
++bool setup_connection_pool_based_on_endpoint_type(char *hostName, char **endpoint) {
++	if (!hostName || !*endpoint)
 +		return false;
 +	if (!is_cluster_endpoint(hostName))
 +		return true;
@@ -59,7 +59,7 @@ index fad0172..d175376 100644
 +		goto cleanup;
 +
 +	/* Get endpoint parts */
-+	if (!split_dbname_and_dnsname(endpoint, &endpoint_db, &endpoint_dns))
++	if (!split_dbname_and_dnsname(*endpoint, &endpoint_db, &endpoint_dns))
 +		goto cleanup;
 +
 +	/* Determine cluster types */
@@ -156,11 +156,11 @@ index fad0172..d175376 100644
 + * we will use the corresponding writer endpoint and insert the "-ro-" segment
 + * before establishing the connection in the pool.
 + */
-+bool append_ro_suffix_to_cluster_reader_endpoint(char* endpoint, size_t endpoint_size) {
-+	if (!endpoint || endpoint_size == 0 || endpoint_size > MAX_ENDPOINT_LENGTH)
++bool append_ro_suffix_to_cluster_reader_endpoint(char** endpoint, size_t endpoint_size) {
++	if (!*endpoint || endpoint_size == 0 || endpoint_size > MAX_ENDPOINT_LENGTH)
 +		return false;
 +
-+	const char* first_dot = strchr(endpoint, '.');
++	const char* first_dot = strchr(*endpoint, '.');
 +	if (!first_dot)
 +		return false;
 +
@@ -170,7 +170,7 @@ index fad0172..d175376 100644
 +		return false;
 +
 +	/* Pre-calculate all lengths */
-+	const size_t db_name_len = first_dot - endpoint;
++	const size_t db_name_len = first_dot - *endpoint;
 +	const size_t before_cluster_len = cluster_pos - dns_portion;
 +	const size_t cluster_prefix_len = strlen(CLUSTER_DASH_PREFIX);
 +	const size_t cluster_suffix_len = strlen(cluster_pos + cluster_prefix_len);
@@ -180,11 +180,11 @@ index fad0172..d175376 100644
 +	if (total_len > endpoint_size)
 +		return false;
 +
-+	char temp[MAX_ENDPOINT_LENGTH];
++	char temp[MAX_ENDPOINT_LENGTH] = {0};
 +	size_t pos = 0;
 +
 +	/* Build new string */
-+	memcpy(temp, endpoint, db_name_len);
++	memcpy(temp, *endpoint, db_name_len);
 +	pos += db_name_len;
 +	temp[pos++] = '.';
 +	memcpy(temp + pos, dns_portion, before_cluster_len);
@@ -195,8 +195,8 @@ index fad0172..d175376 100644
 +	pos += cluster_suffix_len;
 +	temp[pos] = '\0';
 +
-+	/* Copy back to endpoint */
-+	memcpy(endpoint, temp, total_len);
++	*endpoint = realloc(*endpoint, total_len);
++	memcpy(*endpoint, temp, total_len);
 +	return true;
 +}
 +

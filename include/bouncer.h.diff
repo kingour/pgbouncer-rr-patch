@@ -1,8 +1,35 @@
 diff --git a/include/bouncer.h b/include/bouncer.h
-index d607ddc..e912b5e 100644
+index d607ddc..e47c2aa 100644
 --- a/include/bouncer.h
 +++ b/include/bouncer.h
-@@ -165,6 +165,11 @@ typedef enum ReplicationType ReplicationType;
+@@ -144,6 +144,22 @@ enum LoadBalanceHosts {
+ 	LOAD_BALANCE_HOSTS_ROUND_ROBIN
+ };
+ 
++/**
++ * Enum representing different database contexts used during a Blue-Green deployment.
++ *
++ * - DEFAULT: Represents the default database (used in pgbouncer configuration).
++ * - BLUE_GREEN_SOURCE: The source database in a Blue-Green deployment (usually the current database).
++ * - BLUE_GREEN_TARGET: The target database in a Blue-Green deployment (usually the new database to switch to).
++ *
++ * Note: Initially DEFAULT and BLUE_GREEN_SOURCE typically point to the same database instance (i.e., the same IP address).
++ */
++
++enum BlueGreenDeploymentDBType {
++	DEFAULT,
++	BLUE_GREEN_SOURCE,
++	BLUE_GREEN_TARGET
++};
++
+ #define is_server_socket(sk) ((sk)->state >= SV_FREE)
+ 
+ 
+@@ -162,9 +178,15 @@ typedef struct ScramState ScramState;
+ typedef struct PgPreparedStatement PgPreparedStatement;
+ typedef enum ResponseAction ResponseAction;
+ typedef enum ReplicationType ReplicationType;
++typedef struct TopologyData TopologyData;
  
  extern int cf_sbuf_len;
  
@@ -14,7 +41,24 @@ index d607ddc..e912b5e 100644
  #include "util.h"
  #include "iobuf.h"
  #include "sbuf.h"
-@@ -448,13 +453,33 @@ struct PgPool {
+@@ -302,6 +324,16 @@ const char *pga_str(const PgAddr *a, char *dst, int dstlen);
+ const char *pga_details(const PgAddr *a, char *dst, int dstlen);
+ int pga_cmp_addr(const PgAddr *a, const PgAddr *b);
+ 
++/*
++ * Structure representing parsed topology information for a database instance
++ */
++struct TopologyData {
++	char *endpoint;   // Hostname or IP address of the instance
++	char *role;       // Role of the instance (e.g., BLUE_GREEN_DEPLOYMENT_SOURCE, BLUE_GREEN_DEPLOYMENT_TARGET)
++	int port_num;     // Port number the instance is listening on
++	char *status;     // Operational status (e.g., AVAILABLE, SWITCHOVER_IN_POST_PROCESSING, SWITCHOVER_COMPLETED)
++};
++
+ /*
+  * Stats, kept per-pool.
+  */
+@@ -448,13 +480,33 @@ struct PgPool {
  
  	/* if last connect to server failed, there should be delay before next */
  	usec_t last_connect_time;
@@ -48,7 +92,7 @@ index d607ddc..e912b5e 100644
  };
  
  /*
-@@ -564,6 +589,8 @@ struct PgDatabase {
+@@ -564,6 +616,8 @@ struct PgDatabase {
  	int max_db_connections;	/* max server connections between all pools */
  	usec_t server_lifetime;	/* max lifetime of server connection */
  	char *connect_query;	/* startup commands to send to server after connect */
@@ -57,15 +101,16 @@ index d607ddc..e912b5e 100644
  	enum LoadBalanceHosts load_balance_hosts;	/* strategy for host selection in a comma-separated host list */
  
  	struct PktBuf *startup_params;	/* partial StartupMessage (without user) be sent to server */
-@@ -583,6 +610,7 @@ struct PgDatabase {
+@@ -583,6 +637,8 @@ struct PgDatabase {
  	bool db_disabled;	/* is the database accepting new connections? */
  	bool admin;		/* internal console db */
  	bool fake;		/* not a real database, only for mock auth */
-+	bool is_source_db;      /* is this a source database of Blue Green Deployment */
++
++	enum BlueGreenDeploymentDBType blue_green_deployment_db_type;	/* indicates the current database context in a Blue-Green deployment (e.g., DEFAULT, SOURCE, or TARGET) */
  	usec_t inactive_time;	/* when auto-database became inactive (to kill it after timeout) */
  	unsigned active_stamp;	/* set if autodb has connections */
  	int connection_count;	/* total connections for this database in all pools */
-@@ -767,7 +795,9 @@ extern int cf_peer_id;
+@@ -767,7 +823,9 @@ extern int cf_peer_id;
  extern int cf_pool_mode;
  extern int cf_max_client_conn;
  extern int cf_default_pool_size;
@@ -75,7 +120,7 @@ index d607ddc..e912b5e 100644
  extern int cf_res_pool_size;
  extern usec_t cf_res_pool_timeout;
  extern int cf_max_db_connections;
-@@ -786,6 +816,7 @@ extern int cf_server_reset_query_always;
+@@ -786,6 +844,7 @@ extern int cf_server_reset_query_always;
  extern char *cf_server_check_query;
  extern usec_t cf_server_check_delay;
  extern int cf_server_fast_close;
@@ -83,7 +128,7 @@ index d607ddc..e912b5e 100644
  extern usec_t cf_server_connect_timeout;
  extern usec_t cf_server_login_retry;
  extern usec_t cf_query_timeout;
-@@ -840,6 +871,11 @@ extern int cf_log_disconnections;
+@@ -840,6 +899,11 @@ extern int cf_log_disconnections;
  extern int cf_log_pooler_errors;
  extern int cf_application_name_add_host;
  
