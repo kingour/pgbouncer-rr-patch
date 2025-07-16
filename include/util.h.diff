@@ -1,10 +1,10 @@
 diff --git a/include/util.h b/include/util.h
-index 35a284b..32e9782 100644
+index f46e452..3c2d6ae 100644
 --- a/include/util.h
 +++ b/include/util.h
-@@ -19,6 +19,16 @@
- #include <usual/logging.h>
+@@ -20,6 +20,24 @@
  #include <usual/string.h>
+ #include <usual/cfparser.h>
  
 +/*
 + * sets the global writer to NULL for the pool
@@ -15,6 +15,14 @@ index 35a284b..32e9782 100644
 + * get the global writer, if any from the pool
 + */
 +PgPool *get_global_writer(PgPool *pool);
++
++/*
++ * checks if fast switchover mode is disabled for the specific pool.
++ * Fast switchover is enabled only when:
++ * 1. Pool has topology query configured and
++ * 2. fast switchover flag is enabled
++ */
++bool is_fast_switchover_disabled_for_pool(PgPool *pool);
 +
  /*
   * logging about specific socket

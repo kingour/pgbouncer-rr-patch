@@ -1,13 +1,13 @@
 diff --git a/src/loader.c b/src/loader.c
-index fd2e7ab..9692913 100644
+index 4018d78..5e1718f 100644
 --- a/src/loader.c
 +++ b/src/loader.c
 @@ -32,6 +32,7 @@
-
+ 
  bool any_user_level_timeout_set;
  bool any_user_level_client_timeout_set;
 +PgDatabase *fast_switchover_db;
-
+ 
  /* parse parameter name before '=' */
  static char *cstr_get_key(char *p, char **dst_p)
 @@ -57,12 +58,20 @@ static char *cstr_unquote_value(char *p)
@@ -31,8 +31,8 @@ index fd2e7ab..9692913 100644
  		*s++ = *p++;
  	}
  	/* terminate actual value */
-@@ -243,6 +252,76 @@ fail:
-	free(host);
+@@ -243,6 +252,81 @@ fail:
+ 	free(host);
  	return false;
  }
 +
@@ -81,6 +81,11 @@ index fd2e7ab..9692913 100644
 +		if (!new_db->topology_query)
 +			goto oom;
 +	}
++	if (new_db->recovery_query) {
++		new_db->recovery_query = strdup(db->recovery_query);
++		if (!new_db->recovery_query)
++			goto oom;
++	}
 +	if (db->auth_dbname) {
 +		new_db->auth_dbname = strdup(db->auth_dbname);
 +		if (!new_db->auth_dbname)
@@ -108,15 +113,16 @@ index fd2e7ab..9692913 100644
  /* fill PgDatabase from connstr */
  bool parse_database(void *base, const char *name, const char *connstr)
  {
-@@ -273,6 +352,7 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -273,6 +357,8 @@ bool parse_database(void *base, const char *name, const char *connstr)
  	char *datestyle = NULL;
  	char *timezone = NULL;
  	char *connect_query = NULL;
 +	char *topology_query = NULL;
++	char *recovery_query = NULL;
  	char *appname = NULL;
-	char *auth_query = NULL;
+ 	char *auth_query = NULL;
  
-@@ -358,8 +438,20 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -358,8 +444,35 @@ bool parse_database(void *base, const char *name, const char *connstr)
  				goto fail;
  			}
  		} else if (strcmp("connect_query", key) == 0) {
@@ -124,7 +130,11 @@ index fd2e7ab..9692913 100644
 +				log_error("connect_query cannot be used if topology_query is set");
 +				goto fail;
 +			}
-			if (!set_param_value(&connect_query, val))
++			if (recovery_query != NULL) {
++				log_error("connect_query cannot be used if recovery_query is set");
++				goto fail;
++			}
+ 			if (!set_param_value(&connect_query, val))
  				goto fail;
 +		} else if (strcmp("topology_query", key) == 0) {
 +			if (connect_query != NULL) {
@@ -134,31 +144,53 @@ index fd2e7ab..9692913 100644
 +			if (!set_param_value(&topology_query, val))
 +				goto fail;
 +			fast_switchover = true;
++		} else if (strcmp("recovery_query", key) == 0) {
++			if (connect_query != NULL) {
++				log_error("recovery_query cannot be used if connect_query is set");
++				goto fail;
++			}
++			if (topology_query == NULL) {
++				log_error("recovery_query cannot be used if topology_query is not set");
++				goto fail;
++			}
++			if (!set_param_value(&recovery_query, val))
++				goto fail;
  		} else if (strcmp("application_name", key) == 0) {
  			appname = val;
-		} else if (strcmp("auth_query", key) == 0) {
-@@ -399,6 +491,8 @@ bool parse_database(void *base, const char *name, const char *connstr)
+ 		} else if (strcmp("auth_query", key) == 0) {
+@@ -399,12 +512,16 @@ bool parse_database(void *base, const char *name, const char *connstr)
  			changed = true;
-		} else if (!strcmpeq(connect_query, db->connect_query)) {
+ 		} else if (!strcmpeq(connect_query, db->connect_query)) {
  			changed = true;
 +		} else if (!strcmpeq(topology_query, db->topology_query)) {
 +			changed = true;
-		} else if (!strcmpeq(db->auth_dbname, auth_dbname)) {
+ 		} else if (!strcmpeq(db->auth_dbname, auth_dbname)) {
  			changed = true;
-		} else if (!strcmpeq(db->auth_query, auth_query)) {
-@@ -423,8 +517,11 @@ bool parse_database(void *base, const char *name, const char *connstr)
-	db->server_lifetime = server_lifetime;
-	db->load_balance_hosts = load_balance_hosts;
+ 		} else if (!strcmpeq(db->auth_query, auth_query)) {
+ 			changed = true;
+ 		} else if (load_balance_hosts != db->load_balance_hosts) {
+ 			changed = true;
++		} else if (!strcmpeq(recovery_query, db->recovery_query)) {
++			changed = true;
+ 		}
+ 		if (changed)
+ 			tag_database_dirty(db);
+@@ -423,8 +540,14 @@ bool parse_database(void *base, const char *name, const char *connstr)
+ 	db->server_lifetime = server_lifetime;
+ 	db->load_balance_hosts = load_balance_hosts;
  	free(db->connect_query);
 +	free(db->topology_query);
++	free(db->recovery_query);
  	db->connect_query = connect_query;
 +	db->topology_query = topology_query;
-	connect_query = NULL;
++	db->recovery_query = recovery_query;
+ 	connect_query = NULL;
 +	topology_query = NULL;
-
-	if (!set_param_value(&db->auth_dbname, auth_dbname))
++	recovery_query = NULL;
+ 
+ 	if (!set_param_value(&db->auth_dbname, auth_dbname))
  		goto fail;
-@@ -486,6 +583,9 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -486,6 +609,9 @@ bool parse_database(void *base, const char *name, const char *connstr)
  	/* remember dbname */
  	db->dbname = (char *)msg->buf + dbname_ofs;
  

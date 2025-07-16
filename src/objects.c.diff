@@ -1,17 +1,17 @@
 diff --git a/src/objects.c b/src/objects.c
-index 5603c74..54f18ec 100644
+index d64a523..2448173 100644
 --- a/src/objects.c
 +++ b/src/objects.c
-@@ -769,14 +769,20 @@ PgPool *get_pool(PgDatabase *db, PgCredentials *user_credentials)
+@@ -766,14 +766,20 @@ PgPool *get_pool(PgDatabase *db, PgCredentials *user_credentials)
  {
  	struct List *item;
  	PgPool *pool;
 +	PgPool *global_writer = NULL;
-
-	if (!db || !user_credentials)
+ 
+ 	if (!db || !user_credentials)
  		return NULL;
-
-	list_for_each(item, &user_credentials->global_user->pool_list) {
+ 
+ 	list_for_each(item, &user_credentials->global_user->pool_list) {
  		pool = container_of(item, PgPool, map_head);
 -		if (pool->db == db)
 +		if (pool->db == db) {
@@ -22,20 +22,23 @@ index 5603c74..54f18ec 100644
  			return pool;
 +		}
  	}
-
-	return new_pool(db, user_credentials);
-@@ -1175,6 +1181,10 @@ bool life_over(PgSocket *server)
- 	usec_t last_kill = now - pool->last_lifetime_disconnect;
-	usec_t server_lifetime = pool_server_lifetime(pool);
  
-+	// never close the pools when using fast switchovers
-+	if (pool->db && pool->db->topology_query)
+ 	return new_pool(db, user_credentials);
+@@ -1172,6 +1178,13 @@ bool life_over(PgSocket *server)
+ 	usec_t last_kill = now - pool->last_lifetime_disconnect;
+ 	usec_t server_lifetime = pool_server_lifetime(pool);
+ 
++	/*
++	 * never close the pools when using fast switchovers.
++	 * Including a check for fast switchover feature enablement as well. For Blue-Green Deployment, the fast switchover feature will be disabled after the switchover is complete.
++	 */
++	if (pool->db && pool->db->topology_query && fast_switchover)
 +		return false;
 +
-	if (age < server_lifetime)
+ 	if (age < server_lifetime)
  		return false;
  
-@@ -2022,6 +2032,8 @@ PgSocket *accept_client(int sock, bool is_unix)
+@@ -2015,6 +2028,8 @@ PgSocket *accept_client(int sock, bool is_unix)
  /* client managed to authenticate, send welcome msg and accept queries */
  bool finish_client_login(PgSocket *client)
  {
@@ -43,8 +46,8 @@ index 5603c74..54f18ec 100644
 +
  	if (client->db->fake) {
  		if (cf_log_connections)
-			slog_info(client, "login failed: db=%s user=%s", client->db->name, client->login_user_credentials->name);
-@@ -2041,6 +2053,21 @@ bool finish_client_login(PgSocket *client)
+ 			slog_info(client, "login failed: db=%s user=%s", client->db->name, client->login_user_credentials->name);
+@@ -2029,6 +2044,21 @@ bool finish_client_login(PgSocket *client)
  
  	switch (client->state) {
  	case CL_LOGIN:

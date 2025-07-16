@@ -1,10 +1,10 @@
 diff --git a/src/util.c b/src/util.c
-index 10bd2c3..6940c29 100644
+index fad0172..eaaadc0 100644
 --- a/src/util.c
 +++ b/src/util.c
-@@ -26,6 +26,33 @@
- #include <usual/crypto/csrandom.h>
- #include <usual/socket.h>
+@@ -32,6 +32,33 @@
+ #include <openssl/evp.h>
+ #endif
  
 +PgPool *get_global_writer(PgPool *pool)
 +{
@@ -36,3 +36,11 @@ index 10bd2c3..6940c29 100644
  int log_socket_prefix(enum LogLevel lev, void *ctx, char *dst, unsigned int dstlen)
  {
  	const struct PgSocket *sock = ctx;
+@@ -532,3 +559,7 @@ bool check_reserved_database(const char *value)
+ 	}
+ 	return true;
+ }
++
++bool is_fast_switchover_disabled_for_pool(PgPool *pool) {
++	return !pool->db->topology_query || !fast_switchover;
++}
