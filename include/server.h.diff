@@ -1,14 +1,15 @@
 diff --git a/include/server.h b/include/server.h
-index e500b11..03c3fae 100644
+index e500b11..8bd9eab 100644
 --- a/include/server.h
 +++ b/include/server.h
-@@ -16,6 +16,10 @@
+@@ -16,6 +16,11 @@
   * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
   */
  
 +/* Define constants that indicate the switchover status in a Blue-Green Deployment */
 +#define SWITCHOVER_IN_POST_PROCESSING "SWITCHOVER_IN_POST_PROCESSING"
 +#define SWITCHOVER_COMPLETED "SWITCHOVER_COMPLETED"
++#define BLUE_GREEN_DEPLOYMENT_SOURCE "BLUE_GREEN_DEPLOYMENT_SOURCE"
 +
  bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *pkt)  _MUSTCHECK;
  void kill_pool_logins(PgPool *pool, const char *sqlstate, const char *msg);

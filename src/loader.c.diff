@@ -1,5 +1,5 @@
 diff --git a/src/loader.c b/src/loader.c
-index 4018d78..5e1718f 100644
+index 4018d78..5758e2d 100644
 --- a/src/loader.c
 +++ b/src/loader.c
 @@ -32,6 +32,7 @@
@@ -36,7 +36,7 @@ index 4018d78..5e1718f 100644
  	return false;
  }
 +
-+PgPool *new_pool_from_db(PgDatabase *db, char *dbname, char *hostname)
++PgPool *new_pool_from_db(PgDatabase *db, char *dbname, char *hostname, int port)
 +{
 +	PgPool *pool;
 +	PgDatabase *new_db = find_database(dbname);
@@ -65,7 +65,7 @@ index 4018d78..5e1718f 100644
 +	if (!new_db->host)
 +		goto oom;
 +
-+	new_db->port = db->port;
++	new_db->port = port;
 +	new_db->pool_size = db->pool_size;
 +	new_db->min_pool_size = db->min_pool_size;
 +	new_db->res_pool_size = db->res_pool_size;
