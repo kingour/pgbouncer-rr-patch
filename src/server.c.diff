@@ -1,12 +1,13 @@
 diff --git a/src/server.c b/src/server.c
-index c6e5efe..ef0cdb3 100644
+index c6e5efe..49d2a6c 100644
 --- a/src/server.c
 +++ b/src/server.c
-@@ -27,6 +27,122 @@
+@@ -27,6 +27,123 @@
  
  #define ERRCODE_CANNOT_CONNECT_NOW "57P03"
  
 +bool routing_traffic_to_target_complete = false;
++bool source_instance_down_before_switchover = false;
 +
 +/**
 + * Extracts and processes query result data from a packet into a tab-separated string.
@@ -125,7 +126,7 @@ index c6e5efe..ef0cdb3 100644
  static bool load_parameter(PgSocket *server, PktHdr *pkt, bool startup)
  {
  	const char *key, *val;
-@@ -122,6 +238,12 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -122,6 +239,12 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  	const char *msg;
  	bool res = false;
  	const uint8_t *ckey;
@@ -138,7 +139,7 @@ index c6e5efe..ef0cdb3 100644
  
  	if (incomplete_pkt(pkt)) {
  		disconnect_server(server, true, "partial pkt in login phase");
-@@ -133,12 +255,16 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -133,12 +256,16 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  		switch (pkt->type) {
  		case PqMsg_ReadyForQuery:
  		case PqMsg_ParameterStatus:
@@ -155,7 +156,7 @@ index c6e5efe..ef0cdb3 100644
  		/* fallthrough */
  		default:	/* ignore rest */
  			sbuf_prepare_skip(sbuf, pkt->len);
-@@ -152,6 +278,71 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -152,6 +279,71 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  		disconnect_server(server, true, "unknown pkt from server");
  		break;
  
@@ -227,7 +228,7 @@ index c6e5efe..ef0cdb3 100644
  	case PqMsg_ErrorResponse:
  		/*
  		 * If we cannot log into the server, then we drop all clients
-@@ -201,7 +392,42 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -201,7 +393,60 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  			if (!res)
  				disconnect_server(server, false, "exec_on_connect query failed");
  			break;
@@ -238,20 +239,38 @@ index c6e5efe..ef0cdb3 100644
 +			if (!res)
 +				disconnect_server(server, false, "exec_on_connect query failed");
 +			break;
-+		} else if (fast_switchover && server->pool->db->recovery_query && routing_traffic_to_target_complete) {
-+			/*
-+			 * After the switchover is completed, we set 'routing_traffic_to_target_complete' to true in 'handle_server_work'.
-+			 * Once DNS resolution is complete for the target instance, the new DNS becomes available for queries.
-+			 * Here, we monitor the startup status of the new blue instance and the 'routing_traffic_to_target_complete' flag.
-+			 * Once both conditions are met, we disable the fast switchover feature.
-+			 */
-+			log_debug("Once the switchover is completed for DB : %s, disabling the fast switchover and reverting PgBouncer to standard connection pooling mode.", server->pool->db->name);
-+			if (!server->pool->parent_pool) {
-+				server->pool->parent_pool = server->pool;
++		} else if (fast_switchover && source_instance_down_before_switchover && server->pool->db->recovery_query) {
++			if (server->pool->db->is_source_db) {
++				/*
++				 * This scenario occurs when the source instance was down before the switchover and has now become available.
++				 * During the handle server work, we monitor the metadata status. If the metadata entry shows AVAILABLE,
++				 * it indicates that the database connection was not dropped due to the switchover.
++				 * In this case, we wait for the source instance to come back online. Once it is available,
++				 * we reset the global writer to the source instance.
++				 */
++				log_debug("Setting the global writer once the source instance comes up : db_name %s", server->pool->db->name);
++				if (!server->pool->parent_pool) {
++					server->pool->parent_pool = server->pool;
++				}
++				server->pool->parent_pool->global_writer = server->pool;
 +			}
-+			server->pool->parent_pool->global_writer = server->pool;
-+			fast_switchover = false;
-+			routing_traffic_to_target_complete = false;
++			source_instance_down_before_switchover = false;
++		} else if (fast_switchover && server->pool->db->recovery_query && routing_traffic_to_target_complete) {
++			if (server->pool->db->is_source_db) {
++				/*
++				 * After the switchover is completed, we set 'routing_traffic_to_target_complete' to true in 'handle_server_work'.
++				 * Once DNS resolution is complete for the target instance, the new DNS becomes available for queries.
++				 * Here, we monitor the startup status of the new blue instance and the 'routing_traffic_to_target_complete' flag.
++				 * Once both conditions are met, we disable the fast switchover feature.
++				 */
++				log_debug("Once the switchover is completed for DB : %s, disabling the fast switchover and reverting PgBouncer to standard connection pooling mode.", server->pool->db->name);
++				if (!server->pool->parent_pool) {
++					server->pool->parent_pool = server->pool;
++				}
++				server->pool->parent_pool->global_writer = server->pool;
++				fast_switchover = false;
++				routing_traffic_to_target_complete = false;
++			}
 +		}
 +
 +		if (server->pool->db->topology_query && server->pool->initial_writer_endpoint && server->pool->num_nodes < 2) {
@@ -270,15 +289,16 @@ index c6e5efe..ef0cdb3 100644
  
  		/* login ok */
  		slog_debug(server, "server login ok, start accepting queries");
-@@ -363,6 +589,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -363,6 +608,8 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  	bool async_response = false;
  	struct List *item, *tmp;
  	bool ignore_packet = false;
 +	bool res = false;
++	PgPool *next_pool;
  
  	Assert(!server->pool->db->admin);
  
-@@ -374,6 +601,15 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -374,6 +621,15 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  
  	/* pooling decisions will be based on this packet */
  	case PqMsg_ReadyForQuery:
@@ -294,7 +314,7 @@ index c6e5efe..ef0cdb3 100644
  
  		/* if partial pkt, wait */
  		if (!mbuf_get_char(&pkt->data, &state))
-@@ -461,6 +697,22 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -461,6 +717,22 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  		break;
  
  	case PqMsg_CommandComplete:
@@ -317,7 +337,7 @@ index c6e5efe..ef0cdb3 100644
  		/* ErrorResponse and CommandComplete show end of copy mode */
  		if (server->copy_mode) {
  			slog_debug(server, "COPY finished");
-@@ -545,6 +797,37 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -545,6 +817,53 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  	/* data packets, there will be more coming */
  	case PqMsg_CopyData:
  	case PqMsg_DataRow:
@@ -346,6 +366,22 @@ index c6e5efe..ef0cdb3 100644
 +				if (server->pool->db->recovery_query) {
 +					routing_traffic_to_target_complete =  true;
 +				}
++			} else if (strcmp(data, AVAILABLE) == 0) {
++				/*
++				 * This scenario occurs when the source instance becomes unavailable before the switchover.
++				 * As a result, the switchover status entry in the Blue-Green Deployment metadata table remains as AVAILABLE.
++				 * In this case, we will attempt to re-establish the closed connection and set the source_instance_down_before_switchover flag to true.
++				 */
++				log_debug("handle_server_work: source instance is down before the switchover need to open the new connection, recovery query ran on : db_name %s", server->pool->db->name);
++				statlist_for_each(item, &pool_list) {
++					next_pool = container_of(item, PgPool, head);
++					if (!next_pool->last_connect_failed) {
++						continue;
++					}
++					log_debug("launch_recheck: establishing new connection to pool: %s", next_pool->db->name);
++					launch_new_connection(next_pool, /* evict_if_needed= */ true);
++				}
++				source_instance_down_before_switchover = true;
 +			} else {
 +				log_debug("handle_server_work: connected to reader (pg_is_in_recovery is '%s'). db_name: %s, Must keep polling until next server.", data, server->pool->db->name);
 +			}
@@ -355,7 +391,7 @@ index c6e5efe..ef0cdb3 100644
  		break;
  	}
  	server->idle_tx = idle_tx;
-@@ -632,7 +915,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -632,7 +951,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  			}
  		}
  	} else {
@@ -364,7 +400,7 @@ index c6e5efe..ef0cdb3 100644
  			slog_warning(server,
  				     "got packet '%c' from server when not linked",
  				     pkt_desc(pkt));
-@@ -640,6 +923,19 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -640,6 +959,19 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  		sbuf_prepare_skip(sbuf, pkt->len);
  	}
  
@@ -384,7 +420,7 @@ index c6e5efe..ef0cdb3 100644
  	return true;
  }
  
-@@ -754,6 +1050,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -754,6 +1086,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  	bool res = false;
  	PgSocket *server = container_of(sbuf, PgSocket, sbuf);
  	PgPool *pool = server->pool;
@@ -392,7 +428,7 @@ index c6e5efe..ef0cdb3 100644
  	PktHdr pkt;
  	char infobuf[96];
  
-@@ -768,8 +1065,18 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -768,8 +1101,18 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  	case SBUF_EV_RECV_FAILED:
  		if (server->state == SV_ACTIVE_CANCEL)
  			disconnect_server(server, false, "successfully sent cancel request");
@@ -412,7 +448,7 @@ index c6e5efe..ef0cdb3 100644
  		break;
  	case SBUF_EV_SEND_FAILED:
  		disconnect_client(server->link, false, "unexpected eof");
-@@ -810,6 +1117,10 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -810,6 +1153,10 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  		break;
  	case SBUF_EV_CONNECT_FAILED:
  		Assert(server->state == SV_LOGIN);
