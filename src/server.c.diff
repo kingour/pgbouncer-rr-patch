@@ -1,5 +1,5 @@
 diff --git a/src/server.c b/src/server.c
-index c6e5efe..116e344 100644
+index c6e5efe..8390672 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -27,6 +27,123 @@
@@ -126,7 +126,7 @@ index c6e5efe..116e344 100644
  static bool load_parameter(PgSocket *server, PktHdr *pkt, bool startup)
  {
  	const char *key, *val;
-@@ -122,6 +239,12 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -122,6 +239,13 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  	const char *msg;
  	bool res = false;
  	const uint8_t *ckey;
@@ -135,11 +135,12 @@ index c6e5efe..116e344 100644
 +	char *endpoint = NULL;
 +	char *role = NULL;
 +	char *port_str = NULL;
++	char *status = NULL;
 +	int port_num = 0;
  
  	if (incomplete_pkt(pkt)) {
  		disconnect_server(server, true, "partial pkt in login phase");
-@@ -133,12 +256,28 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -133,12 +257,28 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  		switch (pkt->type) {
  		case PqMsg_ReadyForQuery:
  		case PqMsg_ParameterStatus:
@@ -168,7 +169,7 @@ index c6e5efe..116e344 100644
  		/* fallthrough */
  		default:	/* ignore rest */
  			sbuf_prepare_skip(sbuf, pkt->len);
-@@ -152,6 +291,88 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -152,6 +292,115 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  		disconnect_server(server, true, "unknown pkt from server");
  		break;
  
@@ -178,28 +179,55 @@ index c6e5efe..116e344 100644
 +			if (data) {
 +				char *pointer_to_data = data;
 +				endpoint = strsep(&pointer_to_data, "\t");
++				role = strsep(&pointer_to_data, "\t");
++				port_str = strsep(&pointer_to_data, "\t");
++				status = strsep(&pointer_to_data, "\t");
 +				/*
 +				 * In a Blue-Green deployment, the port and role are retrieved using the topology query.
 +				 * When PgBouncer is configured with the fast switchover feature enabled for Blue-Green deployment,
 +				 * it expects valid role and port values. If valid values are not found, PgBouncer will crash.
 +				 */
 +				if (server->pool->db->recovery_query) {
-+					role = strsep(&pointer_to_data, "\t");
-+					port_str = strsep(&pointer_to_data, "\t");
-+					if (role == NULL || port_str == NULL) {
++					if (role == NULL || port_str == NULL || status == NULL) {
 +						free(data);
-+						fatal("port or role cannot be null while using the Blue Green fast switchover, port: %s, role: %s",
-+							port_str ? port_str : "NULL", role ? role : "NULL");
++						fatal("port, role or status cannot be null while using the Blue Green fast switchover, port: %s, role: %s, status: %s",
++							port_str ? port_str : "NULL", role ? role : "NULL", status ? status : "NULL");
++					}
++					/*
++					 * This check handles the scenario where the customer has configured the blue-green deployment fast switch feature
++					 * but the endpoint is not part of a blue-green deployment.
++					 * In such cases, we intentionally crash PgBouncer, as fast switchovers are not supported in other deployment topologies.
++					 */
++					if (strcmp(role, BLUE_GREEN_DEPLOYMENT_TARGET) != 0 && strcmp(role, BLUE_GREEN_DEPLOYMENT_SOURCE) != 0) {
++						fatal("blue-green deployment fast switchover is only supported for roles '%s' or '%s'. The current role for your endpoint is: %s",
++							BLUE_GREEN_DEPLOYMENT_TARGET, BLUE_GREEN_DEPLOYMENT_SOURCE, role);
 +					}
 +					port_num = atoi(port_str);
 +					if (port_num <= 0) {
 +						free(data);
 +						fatal("Invalid port number: %s", port_str);
 +					}
++					/*
++					 * This check handles the case where the customer has configured the blue-green deployment fast switch feature
++					 * but is using the green endpoint.
++					 * In this scenario, fast switchovers are not supported. Therefore, we update the customer with the appropriate message.
++					 */
++					if ((strcmp(role, BLUE_GREEN_DEPLOYMENT_TARGET) == 0) && (strcmp(server->pool->db->host, endpoint) == 0) && (strcmp(status, AVAILABLE) == 0)) {
++						free(data);
++						fatal("for blue green deployment green end point can not be configured to acheive fast switchover feature. Confgigured endpoint : %s", server->pool->db->host);
++					}
 +				} else {
++					/*
++					 * This case handles situations where the customer has not configured the recovery query
++					 * in a blue-green deployment setup.
++					 */
++					if (role && (strcmp(role, BLUE_GREEN_DEPLOYMENT_TARGET) == 0 || strcmp(role, BLUE_GREEN_DEPLOYMENT_SOURCE) == 0)) {
++						fatal("recovery query is mandatory for the blue-green deployment fast switchover feature, but it is currently missing.");
++					}
 +					port_num = server->pool->db->port;
 +				}
-+				log_debug("got initial data, endpoint: %s, role: %s, port: %d", endpoint ? endpoint : "NULL", role ? role : "NULL", port_num);
++				log_debug("got initial data, endpoint: %s, role: %s, port: %d, status: %s", endpoint ? endpoint : "NULL",
++					role ? role : "NULL", port_num, status ? status : "NULL");
 +			}
 +
 +			/* Make a copy of endpoint for hostname */
@@ -257,7 +285,7 @@ index c6e5efe..116e344 100644
  	case PqMsg_ErrorResponse:
  		/*
  		 * If we cannot log into the server, then we drop all clients
-@@ -201,7 +422,60 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
+@@ -201,7 +450,60 @@ static bool handle_server_startup(PgSocket *server, PktHdr *pkt)
  			if (!res)
  				disconnect_server(server, false, "exec_on_connect query failed");
  			break;
@@ -318,7 +346,7 @@ index c6e5efe..116e344 100644
  
  		/* login ok */
  		slog_debug(server, "server login ok, start accepting queries");
-@@ -363,6 +637,8 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -363,6 +665,8 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  	bool async_response = false;
  	struct List *item, *tmp;
  	bool ignore_packet = false;
@@ -327,7 +355,7 @@ index c6e5efe..116e344 100644
  
  	Assert(!server->pool->db->admin);
  
-@@ -374,6 +650,15 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -374,6 +678,15 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  
  	/* pooling decisions will be based on this packet */
  	case PqMsg_ReadyForQuery:
@@ -343,7 +371,7 @@ index c6e5efe..116e344 100644
  
  		/* if partial pkt, wait */
  		if (!mbuf_get_char(&pkt->data, &state))
-@@ -461,6 +746,22 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -461,6 +774,22 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  		break;
  
  	case PqMsg_CommandComplete:
@@ -366,7 +394,7 @@ index c6e5efe..116e344 100644
  		/* ErrorResponse and CommandComplete show end of copy mode */
  		if (server->copy_mode) {
  			slog_debug(server, "COPY finished");
-@@ -545,6 +846,53 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -545,6 +874,53 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  	/* data packets, there will be more coming */
  	case PqMsg_CopyData:
  	case PqMsg_DataRow:
@@ -420,7 +448,7 @@ index c6e5efe..116e344 100644
  		break;
  	}
  	server->idle_tx = idle_tx;
-@@ -632,7 +980,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -632,7 +1008,7 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  			}
  		}
  	} else {
@@ -429,7 +457,7 @@ index c6e5efe..116e344 100644
  			slog_warning(server,
  				     "got packet '%c' from server when not linked",
  				     pkt_desc(pkt));
-@@ -640,6 +988,19 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
+@@ -640,6 +1016,19 @@ static bool handle_server_work(PgSocket *server, PktHdr *pkt)
  		sbuf_prepare_skip(sbuf, pkt->len);
  	}
  
@@ -449,7 +477,7 @@ index c6e5efe..116e344 100644
  	return true;
  }
  
-@@ -754,6 +1115,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -754,6 +1143,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  	bool res = false;
  	PgSocket *server = container_of(sbuf, PgSocket, sbuf);
  	PgPool *pool = server->pool;
@@ -457,7 +485,7 @@ index c6e5efe..116e344 100644
  	PktHdr pkt;
  	char infobuf[96];
  
-@@ -768,8 +1130,18 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -768,8 +1158,18 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  	case SBUF_EV_RECV_FAILED:
  		if (server->state == SV_ACTIVE_CANCEL)
  			disconnect_server(server, false, "successfully sent cancel request");
@@ -477,7 +505,7 @@ index c6e5efe..116e344 100644
  		break;
  	case SBUF_EV_SEND_FAILED:
  		disconnect_client(server->link, false, "unexpected eof");
-@@ -810,6 +1182,10 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -810,6 +1210,10 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  		break;
  	case SBUF_EV_CONNECT_FAILED:
  		Assert(server->state == SV_LOGIN);
