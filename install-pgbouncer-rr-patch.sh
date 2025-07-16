@@ -39,6 +39,7 @@ MERGEFILES="\
    include/objects.h\
    include/pktbuf.h\
    include/util.h\
+   include/server.h\
    src/admin.c\
    src/janitor.c\
    src/loader.c\
