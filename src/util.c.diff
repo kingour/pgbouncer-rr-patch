@@ -1,10 +1,10 @@
 diff --git a/src/util.c b/src/util.c
-index 10bd2c3..6940c29 100644
+index fad0172..d609ba6 100644
 --- a/src/util.c
 +++ b/src/util.c
-@@ -26,6 +26,33 @@
- #include <usual/crypto/csrandom.h>
- #include <usual/socket.h>
+@@ -32,6 +32,33 @@
+ #include <openssl/evp.h>
+ #endif
  
 +PgPool *get_global_writer(PgPool *pool)
 +{
@@ -36,3 +36,226 @@ index 10bd2c3..6940c29 100644
  int log_socket_prefix(enum LogLevel lev, void *ctx, char *dst, unsigned int dstlen)
  {
  	const struct PgSocket *sock = ctx;
+@@ -532,3 +559,221 @@ bool check_reserved_database(const char *value)
+ 	}
+ 	return true;
+ }
++
++bool is_fast_switchover_disabled_for_pool(PgPool *pool) {
++	return !pool->db->topology_query || !fast_switchover;
++}
++
++bool setup_connection_pool_based_on_endpoint_type(char *hostName, char **endpoint) {
++	if (!hostName || !*endpoint)
++		return false;
++	if (!is_cluster_endpoint(hostName))
++		return true;
++	char *hostname_db = NULL, *hostname_dns = NULL;
++	char *endpoint_db = NULL, *endpoint_dns = NULL;
++	bool result = false;
++
++	/* Get hostname parts */
++	if (!split_dbname_and_dnsname(hostName, &hostname_db, &hostname_dns))
++		goto cleanup;
++
++	/* Get endpoint parts */
++	if (!split_dbname_and_dnsname(*endpoint, &endpoint_db, &endpoint_dns))
++		goto cleanup;
++
++	/* Determine cluster types */
++	HostClusterEndPointType host_cluster_endpoint_type = HOST_CLUSTER_ENDPOINT_TYPE_WRITER;
++	if (strstr(hostname_dns, CLUSTER_RO))
++		host_cluster_endpoint_type = HOST_CLUSTER_ENDPOINT_TYPE_READER_ONLY;
++	else if (strstr(hostname_dns, CLUSTER_CUSTOM))
++		host_cluster_endpoint_type = HOST_CLUSTER_ENDPOINT_TYPE_CUSTOM;
++
++	/* Process based on cluster type */
++	switch (host_cluster_endpoint_type) {
++	case HOST_CLUSTER_ENDPOINT_TYPE_WRITER:
++		result = !strstr(endpoint_dns, CLUSTER_CUSTOM);
++		break;
++	case HOST_CLUSTER_ENDPOINT_TYPE_READER_ONLY:
++		if (strstr(endpoint_dns, CLUSTER_CUSTOM)) {
++			result = false;
++		} else {
++			result = append_ro_suffix_to_cluster_reader_endpoint(endpoint, MAX_ENDPOINT_LENGTH);
++		}
++		break;
++	case HOST_CLUSTER_ENDPOINT_TYPE_CUSTOM:
++		if (!strstr(endpoint_dns, CLUSTER_CUSTOM)) {
++			result = false;
++		} else {
++			char* endpoint_db_compare = strdup(endpoint_db);
++			if (endpoint_db_compare) {
++				char* last_green_pos = strstr(endpoint_db_compare, CLUSTER_GREEN_TAG);
++				if (last_green_pos) {
++					char* next_pos;
++					/* Find the last occurrence of CLUSTER_GREEN_TAG */
++					while ((next_pos = strstr(last_green_pos + 1, CLUSTER_GREEN_TAG)) != NULL) {
++						last_green_pos = next_pos;
++					}
++					/* Truncate the string */
++					*last_green_pos = '\0';
++				}
++				result = (strcmp(hostname_db, endpoint_db_compare) == 0);
++				free(endpoint_db_compare);
++			}
++		}
++		break;
++	}
++
++cleanup:
++	free(hostname_db);
++	free(hostname_dns);
++	free(endpoint_db);
++	free(endpoint_dns);
++	return result;
++}
++
++bool split_dbname_and_dnsname(char *endpoint, char **db_name, char **dns_name) {
++	if (!endpoint || !db_name || !dns_name)
++		return false;
++
++	const char *dot = strchr(endpoint, '.');
++	if (!dot)
++		return false;
++
++	size_t db_len = dot - endpoint;
++
++	/* Free existing memory */
++	if (*db_name) {
++		free(*db_name);
++		*db_name = NULL;
++	}
++	if (*dns_name) {
++		free(*dns_name);
++		*dns_name = NULL;
++	}
++	/* Allocate and copy db_name */
++	*db_name = malloc(db_len + 1);
++	if (!*db_name) return false;
++
++	memcpy(*db_name, endpoint, db_len);
++	(*db_name)[db_len] = '\0';
++
++	/* Allocate and copy dns_name */
++	*dns_name = strdup(dot + 1);
++	if (!*dns_name) {
++		free(*db_name);
++		*db_name = NULL;
++		return false;
++	}
++
++	return true;
++}
++
++/*
++ * The metadata table contains entries only for writer and custom endpoints.
++ * The reader endpoint differs from the writer endpoint by including the "-ro-" segment after "cluster".
++ * If the customer configures PgBouncer with a cluster reader endpoint,
++ * we will use the corresponding writer endpoint and insert the "-ro-" segment
++ * before establishing the connection in the pool.
++ */
++bool append_ro_suffix_to_cluster_reader_endpoint(char** endpoint, size_t endpoint_size) {
++	if (!*endpoint || endpoint_size == 0 || endpoint_size > MAX_ENDPOINT_LENGTH)
++		return false;
++
++	const char* first_dot = strchr(*endpoint, '.');
++	if (!first_dot)
++		return false;
++
++	const char* dns_portion = first_dot + 1;
++	const char* cluster_pos = strstr(dns_portion, CLUSTER_DASH_PREFIX);
++	if (!cluster_pos)
++		return false;
++
++	/* Pre-calculate all lengths */
++	const size_t db_name_len = first_dot - *endpoint;
++	const size_t before_cluster_len = cluster_pos - dns_portion;
++	const size_t cluster_prefix_len = strlen(CLUSTER_DASH_PREFIX);
++	const size_t cluster_suffix_len = strlen(cluster_pos + cluster_prefix_len);
++	const size_t ro_prefix_len = strlen(CLUSTER_RO_PREFIX);
++	const size_t total_len = db_name_len + 1 + before_cluster_len + ro_prefix_len + cluster_suffix_len + 1;
++
++	if (total_len > endpoint_size)
++		return false;
++
++	char temp[MAX_ENDPOINT_LENGTH] = {0};
++	size_t pos = 0;
++
++	/* Build new string */
++	memcpy(temp, *endpoint, db_name_len);
++	pos += db_name_len;
++	temp[pos++] = '.';
++	memcpy(temp + pos, dns_portion, before_cluster_len);
++	pos += before_cluster_len;
++	memcpy(temp + pos, CLUSTER_RO_PREFIX, ro_prefix_len);
++	pos += ro_prefix_len;
++	memcpy(temp + pos, cluster_pos + cluster_prefix_len, cluster_suffix_len);
++	pos += cluster_suffix_len;
++	temp[pos] = '\0';
++
++	*endpoint = realloc(*endpoint, total_len);
++	memcpy(*endpoint, temp, total_len);
++	return true;
++}
++
++bool is_cluster_endpoint(char* endpoint) {
++	if (!endpoint)
++		return false;
++	/* Find the position of the first dot in the endpoint */
++	const char *dotPosition = strchr(endpoint, '.');
++
++	/* If no dot is found, it's not a valid format */
++	if (!dotPosition)
++		return false;
++
++	return (strncmp(dotPosition + 1, CLUSTER_PREFIX, strlen(CLUSTER_PREFIX)) == 0);
++}
++
++
++/**
++ * concat_multiple_strings - Concatenates multiple strings into a single dynamically allocated string.
++ *
++ * This function takes a variable number of string arguments and returns a new string
++ * that is the result of concatenating all non-NULL input strings in order. Memory for
++ * the result is dynamically allocated and must be freed by the caller. If memory
++ * allocation fails or count is 0 or negative, the function returns NULL.
++ *
++ * @param count The number of strings to concatenate.
++ * @param ...   The variable list of 'const char *' strings to concatenate.
++ *
++ * @return A pointer to the newly allocated concatenated string, or NULL on failure.
++ */
++char *concat_multiple_strings(int count, ...) {
++	if (count <= 0) return NULL;
++
++	va_list args;
++	size_t total_len = 1; // For null terminator
++
++	// First pass: calculate total length
++	va_start(args, count);
++	for (int i = 0; i < count; i++) {
++		const char *str = va_arg(args, const char *);
++		if (str) total_len += strlen(str);
++    }
++	va_end(args);
++
++	// Allocate memory
++	char *concat_str = malloc(total_len);
++	if (!concat_str) {
++		log_debug("malloc failed: no memory for concatenated string");
++		return NULL;
++	}
++
++	// Second pass: concatenate strings
++	concat_str[0] = '\0';
++	va_start(args, count);
++	for (int i = 0; i < count; i++) {
++		const char *str = va_arg(args, const char *);
++		if (str) strcat(concat_str, str);
++	}
++	va_end(args);
++	return concat_str;
++}
+\ No newline at end of file

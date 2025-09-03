@@ -1,10 +1,13 @@
 diff --git a/include/loader.h b/include/loader.h
-index 1acbefe..ddb044f 100644
+index 1acbefe..07f7305 100644
 --- a/include/loader.h
 +++ b/include/loader.h
-@@ -25,3 +25,5 @@ bool parse_user(void *base, const char *name, const char *params) _MUSTCHECK;
+@@ -25,3 +25,8 @@ bool parse_user(void *base, const char *name, const char *params) _MUSTCHECK;
  /* user file parsing */
  bool load_auth_file(const char *fn) /* _MUSTCHECK */;
  bool loader_users_check(void) /* _MUSTCHECK */;
 +
-+PgPool *new_pool_from_db(PgDatabase *db, char *dbname, char *hostname);
++/*
++ * Initializes and returns a new connection pool for the specified database, host, and port.
++ */
++PgPool *new_pool_from_db(PgDatabase *db, char *dbname, char *hostname, int port);

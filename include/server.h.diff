@@ -1,0 +1,28 @@
+diff --git a/include/server.h b/include/server.h
+index e500b11..db428f4 100644
+--- a/include/server.h
++++ b/include/server.h
+@@ -16,6 +16,13 @@
+  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  */
+ 
++/* Define constants that indicate the switchover status in a Blue-Green Deployment */
++#define SWITCHOVER_IN_POST_PROCESSING "SWITCHOVER_IN_POST_PROCESSING"
++#define SWITCHOVER_COMPLETED "SWITCHOVER_COMPLETED"
++#define BLUE_GREEN_DEPLOYMENT_SOURCE "BLUE_GREEN_DEPLOYMENT_SOURCE"
++#define BLUE_GREEN_DEPLOYMENT_TARGET "BLUE_GREEN_DEPLOYMENT_TARGET"
++#define AVAILABLE "AVAILABLE"
++
+ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *pkt)  _MUSTCHECK;
+ void kill_pool_logins(PgPool *pool, const char *sqlstate, const char *msg);
+ const char * kill_pool_logins_server_error(PgPool *pool, PktHdr *errpkt);
+@@ -30,3 +37,9 @@ int database_max_connections(PgDatabase *db) _MUSTCHECK;
+ int database_max_client_connections(PgDatabase *db) _MUSTCHECK;
+ int user_max_connections(PgGlobalUser *user) _MUSTCHECK;
+ int user_client_max_connections(PgGlobalUser *user) _MUSTCHECK;
++/* Set up a new connection pool based on topology data. */
++PgPool* setup_new_pool(PgPool *pool_to_configure, TopologyData *topology);
++/* Parse and validate topology data from a query result. */
++const char* parse_topology_data(PgSocket *server, char *data, TopologyData **topology_out);
++void cleanup_parsing_data_and_exit(TopologyData *topology, char *data_copy, char *port_str);
++void cleanup_topology(TopologyData *topology);
