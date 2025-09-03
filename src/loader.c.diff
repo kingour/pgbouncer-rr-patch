@@ -1,16 +1,21 @@
 diff --git a/src/loader.c b/src/loader.c
-index 4018d78..5758e2d 100644
+index 4018d78..fd00572 100644
 --- a/src/loader.c
 +++ b/src/loader.c
-@@ -32,6 +32,7 @@
+@@ -32,6 +32,12 @@
  
  bool any_user_level_timeout_set;
  bool any_user_level_client_timeout_set;
-+PgDatabase *fast_switchover_db;
++/*
++ * Dynamic array for databases that can participate in a fast switchover operation.
++ */
++PgDatabase **fast_switchover_db = NULL;
++int fast_switchover_configured_db_count = 0;
++int fast_switchover_db_capacity = 0;
  
  /* parse parameter name before '=' */
  static char *cstr_get_key(char *p, char **dst_p)
-@@ -57,12 +58,20 @@ static char *cstr_unquote_value(char *p)
+@@ -57,12 +63,20 @@ static char *cstr_unquote_value(char *p)
  	while (1) {
  		if (!*p)
  			return NULL;
@@ -31,7 +36,7 @@ index 4018d78..5758e2d 100644
  		*s++ = *p++;
  	}
  	/* terminate actual value */
-@@ -243,6 +252,81 @@ fail:
+@@ -243,6 +257,117 @@ fail:
  	free(host);
  	return false;
  }
@@ -110,10 +115,46 @@ index 4018d78..5758e2d 100644
 +	die("out of memory");
 +}
 +
++/*
++ * Adds a PgDatabase pointer to the dynamically growing fast_switchover_db array.
++ *
++ * This function ensures that the array has sufficient capacity by reallocating
++ * memory when needed. It starts with an initial capacity of 8 and doubles the
++ * size each time the current capacity is reached.
++ *
++ * Parameters:
++ *   db - Pointer to the PgDatabase to add to the fast switchover list.
++ *
++ * On allocation failure, the function calls fatal(), terminating the program.
++ */
++
++static void add_fast_switchover_db(PgDatabase *db)
++{
++	if (fast_switchover_configured_db_count >= fast_switchover_db_capacity) {
++		// Initial capacity of 8, double the size when needed
++		int new_capacity = fast_switchover_db_capacity == 0 ? 8 : fast_switchover_db_capacity * 2;
++		// Check for overflow
++		if (new_capacity < fast_switchover_db_capacity) {
++			fatal("fast_switchover_db capacity overflow");
++			return;
++		}
++
++		PgDatabase **new_array = realloc(fast_switchover_db, new_capacity * sizeof(PgDatabase *));
++		if (!new_array) {
++			fast_switchover_db_capacity = 0;
++			fast_switchover_configured_db_count = 0;
++			fatal("out of memory allocating fast_switchover_db array");
++		}
++		fast_switchover_db = new_array;
++		fast_switchover_db_capacity = new_capacity;
++	}
++	fast_switchover_db[fast_switchover_configured_db_count++] = db;
++}
++
  /* fill PgDatabase from connstr */
  bool parse_database(void *base, const char *name, const char *connstr)
  {
-@@ -273,6 +357,8 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -273,6 +398,8 @@ bool parse_database(void *base, const char *name, const char *connstr)
  	char *datestyle = NULL;
  	char *timezone = NULL;
  	char *connect_query = NULL;
@@ -122,7 +163,7 @@ index 4018d78..5758e2d 100644
  	char *appname = NULL;
  	char *auth_query = NULL;
  
-@@ -358,8 +444,35 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -358,8 +485,35 @@ bool parse_database(void *base, const char *name, const char *connstr)
  				goto fail;
  			}
  		} else if (strcmp("connect_query", key) == 0) {
@@ -158,7 +199,7 @@ index 4018d78..5758e2d 100644
  		} else if (strcmp("application_name", key) == 0) {
  			appname = val;
  		} else if (strcmp("auth_query", key) == 0) {
-@@ -399,12 +512,16 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -399,12 +553,16 @@ bool parse_database(void *base, const char *name, const char *connstr)
  			changed = true;
  		} else if (!strcmpeq(connect_query, db->connect_query)) {
  			changed = true;
@@ -175,7 +216,7 @@ index 4018d78..5758e2d 100644
  		}
  		if (changed)
  			tag_database_dirty(db);
-@@ -423,8 +540,14 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -423,8 +581,14 @@ bool parse_database(void *base, const char *name, const char *connstr)
  	db->server_lifetime = server_lifetime;
  	db->load_balance_hosts = load_balance_hosts;
  	free(db->connect_query);
@@ -190,12 +231,13 @@ index 4018d78..5758e2d 100644
  
  	if (!set_param_value(&db->auth_dbname, auth_dbname))
  		goto fail;
-@@ -486,6 +609,9 @@ bool parse_database(void *base, const char *name, const char *connstr)
+@@ -486,6 +650,10 @@ bool parse_database(void *base, const char *name, const char *connstr)
  	/* remember dbname */
  	db->dbname = (char *)msg->buf + dbname_ofs;
  
-+	if (fast_switchover)
-+		fast_switchover_db = db;
++	if (fast_switchover && db->topology_query) {
++		add_fast_switchover_db(db);
++	}
 +
  	free(tmp_connstr);
  	return true;

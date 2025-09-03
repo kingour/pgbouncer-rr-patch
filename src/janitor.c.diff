@@ -1,12 +1,13 @@
 diff --git a/src/janitor.c b/src/janitor.c
-index 5131ea5..0c93e5a 100644
+index 5131ea5..edd6b7f 100644
 --- a/src/janitor.c
 +++ b/src/janitor.c
-@@ -24,9 +24,15 @@
+@@ -24,9 +24,16 @@
  
  #include <usual/slab.h>
  
 +bool fast_switchover = false;
++bool is_topology_monitoring_job_enabled = false;
 +
  /* do full maintenance 3x per second */
  static struct timeval full_maint_period = {0, USEC / 3};
@@ -18,7 +19,7 @@ index 5131ea5..0c93e5a 100644
  extern bool any_user_level_server_timeout_set;
  extern bool any_user_level_client_timeout_set;
  
-@@ -127,21 +133,159 @@ void resume_all(void)
+@@ -127,21 +134,159 @@ void resume_all(void)
  	resume_pooler();
  }
  
@@ -184,7 +185,7 @@ index 5131ea5..0c93e5a 100644
  		if (server->ready)
  			break;
  		disconnect_server(server, true, "idle server got dirty");
-@@ -156,6 +300,36 @@ static void launch_recheck(PgPool *pool)
+@@ -156,6 +301,36 @@ static void launch_recheck(PgPool *pool)
  			need_check = false;
  	}
  
@@ -221,7 +222,7 @@ index 5131ea5..0c93e5a 100644
  	if (need_check) {
  		/* send test query, wait for result */
  		slog_debug(server, "P: checking: %s", q);
-@@ -210,11 +384,22 @@ static void per_loop_activate(PgPool *pool)
+@@ -210,11 +385,26 @@ static void per_loop_activate(PgPool *pool)
  			--sv_tested;
  		} else if (sv_used > 0) {
  			/* ask for more connections to be tested */
@@ -238,6 +239,10 @@ index 5131ea5..0c93e5a 100644
 +				log_debug("launch_new_connection loop: going to try to use pool cache since this pool was a writer: last_connect_failed (%d)",
 +						pool->last_connect_failed);
 +				launch_recheck(pool, client);
++				if (client->pool->last_connect_failed) {
++					log_debug("launch_new_connection loop: no used and idle server, launch new connection to pool: %s", client->pool->db->name);
++					launch_new_connection(client->pool, /* evict_if_needed = */ true);
++				}
 +			} else {
 +				log_debug("launch_new_connection loop: need to launch new connection because pool is not already a writer");
 +				launch_new_connection(pool, /* evict_if_needed= */ true);
@@ -246,19 +251,84 @@ index 5131ea5..0c93e5a 100644
  			break;
  		}
  	}
-@@ -306,10 +491,7 @@ static int per_loop_wait_close(PgPool *pool)
- 	return count;
+@@ -307,9 +497,74 @@ static int per_loop_wait_close(PgPool *pool)
  }
  
--/*
+ /*
 - * this function is called for each event loop.
-- */
++ * Checks whether all default pools involved in fast switchover are healthy.
++ *
++ * A pool is considered healthy if:
++ *   - It previously experienced a connection failure (`last_connect_failed`)
++ *   - It has a defined `recovery_query` to verify recovery status
++ *
++ * This function is typically used during blue-green deployment scenarios or fast
++ * switchover to ensure all related pools are fully recovered before proceeding
++ * with switchover-related state transitions.
++ *
++ * Returns:
++ *   true  - All relevant pools are healthy
++ *   false - One or more pools are still unhealthy
+  */
 -void per_loop_maint(void)
++static bool are_all_fast_switchover_pools_healthy(void) {
++	bool any_connect_failed = false;
++	struct List *item;
++	PgPool *next_pool;
++
++	statlist_for_each(item, &pool_list) {
++		next_pool = container_of(item, PgPool, head);
++		if (next_pool->db->blue_green_deployment_db_type != DEFAULT || !next_pool->db->recovery_query) {
++			continue;
++		}
++		if (!next_pool->last_connect_failed) {
++			continue;
++		}
++		log_debug("handle_server_work: Some pool connections are still not healthy. db name : %s", next_pool->db->name);
++		any_connect_failed = true;
++	}
++	return !any_connect_failed;
++}
++
++/*
++ * Checks blue-green deployment pool states and updates flags accordingly.
++ *
++ * This function:
++ *  - Disables fast switchover mode if the switchover is complete and all connection pools are healthy.
++ *  - Resets the "source instance was down before switchover" flag once the source is available and pools are healthy.
++ *
++ * The health check (are_all_fast_switchover_pools_healthy) is only run when either
++ * 'routing_traffic_to_target_complete' or
++ * 'source_instance_down_before_switchover' is true.
++ */
++static void reset_blue_green_switchover_flags() {
++	if (routing_traffic_to_target_complete) {
++		/*
++		 * After a successful switchover, once all fast switchover connection pools are confirmed to be healthy,
++		 * disable the fast switchover feature to restore normal operation.
++		 */
++		if (are_all_fast_switchover_pools_healthy()) {
++			fast_switchover = false;
++			routing_traffic_to_target_complete = false;
++			log_warning("All default pools are up and connected after switchover. Disabling the fast switchover for blue green.");
++		}
++	} else if (source_instance_down_before_switchover) {
++		/*
++		 * Scenario: Source was down before switchover, is now available.
++		 * Wait until all pools are healthy, then reset the flag.
++		 */
++		if (are_all_fast_switchover_pools_healthy()) {
++			log_warning("All pools are up and connected. Resetting source_instance_down_before_switchover flag.");
++			source_instance_down_before_switchover = false;
++		}
++	}
++}
++
 +static void loop_maint(bool initialize)
  {
  	struct List *item;
  	PgPool *pool;
-@@ -318,6 +500,7 @@ void per_loop_maint(void)
+@@ -318,6 +573,7 @@ void per_loop_maint(void)
  	bool partial_pause = false;
  	bool partial_wait = false;
  	bool force_suspend = false;
@@ -266,7 +336,15 @@ index 5131ea5..0c93e5a 100644
  
  	if (cf_pause_mode == P_SUSPEND && cf_suspend_timeout > 0) {
  		usec_t stime = get_cached_time() - g_suspend_start;
-@@ -329,13 +512,40 @@ void per_loop_maint(void)
+@@ -325,17 +581,48 @@ void per_loop_maint(void)
+ 			force_suspend = true;
+ 	}
+ 
++	if (fast_switchover && (routing_traffic_to_target_complete || source_instance_down_before_switchover)) {
++		reset_blue_green_switchover_flags();
++	}
++
+ 	statlist_for_each(item, &pool_list) {
  		pool = container_of(item, PgPool, head);
  		if (pool->db->admin)
  			continue;
@@ -308,7 +386,7 @@ index 5131ea5..0c93e5a 100644
  			}
  			break;
  		case P_PAUSE:
-@@ -374,6 +584,148 @@ void per_loop_maint(void)
+@@ -374,6 +661,174 @@ void per_loop_maint(void)
  		admin_wait_close_done();
  }
  
@@ -338,7 +416,7 @@ index 5131ea5..0c93e5a 100644
 +	bool res = true;
 +	static bool is_running = false;
 +
-+	if (!fast_switchover) {
++	if (!is_topology_monitoring_job_enabled) {
 +		event_del(&blue_green_topology_check_ev);
 +		return;
 +	}
@@ -413,10 +491,20 @@ index 5131ea5..0c93e5a 100644
 +	blue_green_topology_monitoring_interval.tv_usec = 0;
 +
 +	event_del(&blue_green_topology_check_ev);
++	is_topology_monitoring_job_enabled = true;
 +    /* Set up periodic event */
 +    event_assign(&blue_green_topology_check_ev, pgb_event_base, -1, EV_PERSIST, do_topology_check, NULL);
 +    if (event_add(&blue_green_topology_check_ev, &blue_green_topology_monitoring_interval) < 0)
 +		log_warning("event_add failed for blue green topology check, errno : %s", strerror(errno));
++}
++
++static void cleanup_fast_switchover_db(PgDatabase ***fast_switchover_db) {
++	if (*fast_switchover_db) {
++		free(*fast_switchover_db);
++		*fast_switchover_db = NULL;
++		fast_switchover_configured_db_count = 0;
++		fast_switchover_db_capacity = 0;
++	}
 +}
 +
 +/*
@@ -424,25 +512,41 @@ index 5131ea5..0c93e5a 100644
 + */
 +void run_once_to_init(void)
 +{
++	bool bgd_fast_switchover = false;
 +	if (!fast_switchover) {
++		cleanup_fast_switchover_db(&fast_switchover_db);
 +		log_debug("database does not have fast_switchovers enabled, so will not precreate pools to nodes");
 +		return;
 +	}
 +
-+	log_debug("creating pool for %s", fast_switchover_db->name);
-+	if (fast_switchover_db && fast_switchover_db->forced_user_credentials) {
-+		PgPool *pool = get_pool(fast_switchover_db, fast_switchover_db->forced_user_credentials);
-+		if (!pool)
-+			fatal("pool could not be created for %s", fast_switchover_db->name);
-+		pool->num_nodes = 0;
++	/*
++	 * Loop through all databases configured for fast switchover and attempt to create
++	 * a connection pool for each.
++	 */
++	for (int db_index = 0; db_index<fast_switchover_configured_db_count; db_index++) {
++		log_debug("creating pool for %s", fast_switchover_db[db_index]->name);
++		if (fast_switchover_db[db_index]->forced_user_credentials) {
++			PgPool *pool = get_pool(fast_switchover_db[db_index], fast_switchover_db[db_index]->forced_user_credentials);
++			if (!pool) {
++				cleanup_fast_switchover_db(&fast_switchover_db);
++				fatal("pool could not be created for %s", fast_switchover_db[db_index]->name);
++			}
++			pool->num_nodes = 0;
 +
-+		if (fast_switchover_db->recovery_query)
-+			topology_check_setup();
-+	} else {
-+		fatal("Failed to create a connection pool for database: %s. Username is missing. To enable fast switchover, "
-+			   "please provide a user for this database in config.", fast_switchover_db->name);
++			if (fast_switchover_db[db_index]->recovery_query)
++				bgd_fast_switchover = true;
++		} else {
++			cleanup_fast_switchover_db(&fast_switchover_db);
++			fatal("Failed to create a connection pool for database: %s. Username is missing. To enable fast switchover, "
++			    "please provide a user for this database in config.", fast_switchover_db[db_index]->name);
++		}
++
 +	}
 +
++	cleanup_fast_switchover_db(&fast_switchover_db);
++	if(bgd_fast_switchover) {
++		topology_check_setup();
++	}
 +	loop_maint(true);
 +}
 +
@@ -457,7 +561,7 @@ index 5131ea5..0c93e5a 100644
  /* maintaining clients in pool */
  static void pool_client_maint(PgPool *pool)
  {
-@@ -494,6 +846,7 @@ static void check_unused_servers(PgPool *pool, struct StatList *slist, bool idle
+@@ -494,6 +949,7 @@ static void check_unused_servers(PgPool *pool, struct StatList *slist, bool idle
  		} else if (server->state == SV_USED && !server->ready) {
  			disconnect_server(server, true, "SV_USED server got dirty");
  		} else if (cf_server_idle_timeout > 0 && idle > cf_server_idle_timeout
@@ -465,7 +569,7 @@ index 5131ea5..0c93e5a 100644
  			   && (pool_min_pool_size(pool) == 0 || pool_connected_server_count(pool) > pool_min_pool_size(pool))) {
  			disconnect_server(server, true, "server idle timeout");
  		} else if (age >= server_lifetime) {
-@@ -877,6 +1230,8 @@ void kill_database(PgDatabase *db)
+@@ -877,6 +1333,8 @@ void kill_database(PgDatabase *db)
  	if (db->forced_user_credentials)
  		slab_free(credentials_cache, db->forced_user_credentials);
  	free(db->connect_query);
