@@ -1,5 +1,5 @@
 diff --git a/src/server.c b/src/server.c
-index c6e5efe..d2a6780 100644
+index c6e5efe..eb8ded7 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -27,6 +27,125 @@
@@ -654,7 +654,7 @@ index c6e5efe..d2a6780 100644
  		disconnect_server(server, false, "connect failed");
  		break;
  	case SBUF_EV_CONNECT_OK:
-@@ -893,3 +1428,267 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+@@ -893,3 +1428,279 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
  		takeover_login_failed();
  	return res;
  }
@@ -773,6 +773,18 @@ index c6e5efe..d2a6780 100644
 +			log_debug("The current role for your endpoint is: %s", topology->role);
 +			cleanup_parsing_data_and_exit(topology, data_copy, port_str);
 +			return "blue-green deployment fast switchover is only supported for BLUE_GREEN_DEPLOYMENT_SOURCE and BLUE_GREEN_DEPLOYMENT_TARGET roles";
++		}
++
++		/*
++		 * In a Blue-Green deployment for a cluster, fast switchover only works with cluster endpoints
++		 * (reader, writer, or custom).
++		 * Make sure the user has configured cluster endpoints, not instance endpoints of the cluster.
++		 */
++		if (is_cluster_endpoint(topology->endpoint) && !is_cluster_endpoint(server->pool->db->host)) {
++			cleanup_parsing_data_and_exit(topology, data_copy, port_str);
++			return "For a cluster, fast switchover during blue-green deployment only supports cluster endpoints "
++				"(reader, writer, or custom). It looks like an instance endpoint is configured instead. "
++				"Please update the configuration to use a valid cluster endpoint.";
 +		}
 +
 +		topology->port_num = atoi(port_str);
