@@ -1,5 +1,5 @@
 diff --git a/src/util.c b/src/util.c
-index fad0172..af5c802 100644
+index fad0172..d609ba6 100644
 --- a/src/util.c
 +++ b/src/util.c
 @@ -32,6 +32,33 @@
@@ -36,7 +36,7 @@ index fad0172..af5c802 100644
  int log_socket_prefix(enum LogLevel lev, void *ctx, char *dst, unsigned int dstlen)
  {
  	const struct PgSocket *sock = ctx;
-@@ -532,3 +559,175 @@ bool check_reserved_database(const char *value)
+@@ -532,3 +559,221 @@ bool check_reserved_database(const char *value)
  	}
  	return true;
  }
@@ -212,3 +212,50 @@ index fad0172..af5c802 100644
 +
 +	return (strncmp(dotPosition + 1, CLUSTER_PREFIX, strlen(CLUSTER_PREFIX)) == 0);
 +}
++
++
++/**
++ * concat_multiple_strings - Concatenates multiple strings into a single dynamically allocated string.
++ *
++ * This function takes a variable number of string arguments and returns a new string
++ * that is the result of concatenating all non-NULL input strings in order. Memory for
++ * the result is dynamically allocated and must be freed by the caller. If memory
++ * allocation fails or count is 0 or negative, the function returns NULL.
++ *
++ * @param count The number of strings to concatenate.
++ * @param ...   The variable list of 'const char *' strings to concatenate.
++ *
++ * @return A pointer to the newly allocated concatenated string, or NULL on failure.
++ */
++char *concat_multiple_strings(int count, ...) {
++	if (count <= 0) return NULL;
++
++	va_list args;
++	size_t total_len = 1; // For null terminator
++
++	// First pass: calculate total length
++	va_start(args, count);
++	for (int i = 0; i < count; i++) {
++		const char *str = va_arg(args, const char *);
++		if (str) total_len += strlen(str);
++    }
++	va_end(args);
++
++	// Allocate memory
++	char *concat_str = malloc(total_len);
++	if (!concat_str) {
++		log_debug("malloc failed: no memory for concatenated string");
++		return NULL;
++	}
++
++	// Second pass: concatenate strings
++	concat_str[0] = '\0';
++	va_start(args, count);
++	for (int i = 0; i < count; i++) {
++		const char *str = va_arg(args, const char *);
++		if (str) strcat(concat_str, str);
++	}
++	va_end(args);
++	return concat_str;
++}
+\ No newline at end of file
