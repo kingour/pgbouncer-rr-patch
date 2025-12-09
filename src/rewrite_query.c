@@ -1,12 +1,12 @@
 /*
 Copyright 2015-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-Licensed under the Amazon Software License (the "License"). 
+Licensed under the Amazon Software License (the "License").
 You may not use this file except in compliance with the License. A copy of the License is located at
 
     http://aws.amazon.com/asl/
 
-or in the "license" file accompanying this file. 
+or in the "license" file accompanying this file.
 This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, express or implied. See the License for the specific language governing permissions and limitations under the License.
 */
 
@@ -80,13 +80,13 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 
     if (unlikely(cf_verbose > 0)) {
 	    loggable_query_str = strip_newlines(query_str) ;
-	    slog_debug(client, "rewrite_query: Username => %s", client->login_user->name);
+	    slog_debug(client, "rewrite_query: Username => %s", client->login_user_credentials->name);
 	    slog_debug(client, "rewrite_query: Orig Query=> %s", loggable_query_str);
 	    free(loggable_query_str);
 	}
 
 	/* call python function to rewrite the query */
-	tmp_new_query_str = pycall(client, client->login_user->name, query_str, in_transaction, cf_rewrite_query_py_module_file,
+	tmp_new_query_str = pycall(client, client->login_user_credentials->name, query_str, in_transaction, cf_rewrite_query_py_module_file,
 			"rewrite_query");
 	if (tmp_new_query_str == NULL) {
 		slog_debug(client, "query unchanged");

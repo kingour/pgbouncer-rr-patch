@@ -1,28 +1,16 @@
---- ../pgbouncer/src/client.c	2020-04-26 15:20:51.660323326 -0400
-+++ ./src/client.c	2020-04-26 15:19:04.085959392 -0400
-@@ -545,10 +545,10 @@ static bool decide_startup_pool(PgSocket *client, PktHdr *pkt)
- 		} else if (strcmp(key, "application_name") == 0) {
- 			set_appname(client, val);
- 			appname_found = true;
--		} else if (varcache_set(&client->vars, key, val)) {
--			slog_debug(client, "got var: %s=%s", key, val);
- 		} else if (strlist_contains(cf_ignore_startup_params, key)) {
- 			slog_debug(client, "ignoring startup parameter: %s=%s", key, val);
-+		} else if (varcache_set(&client->vars, key, val)) {
-+			slog_debug(client, "got var: %s=%s", key, val);
- 		} else {
- 			slog_warning(client, "unsupported startup parameter: %s=%s", key, val);
- 			disconnect_client(client, true, "unsupported startup parameter: %s", key);
-@@ -883,7 +883,7 @@ static bool handle_client_startup(PgSocket *client, PktHdr *pkt)
+diff --git a/src/client.c b/src/client.c
+index 15bb44f..e4fefda 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -1329,6 +1329,7 @@ static bool handle_client_startup(PgSocket *client, PktHdr *pkt)
  static bool handle_client_work(PgSocket *client, PktHdr *pkt)
  {
  	SBuf *sbuf = &client->sbuf;
--	int rfq_delta = 0;
-+	int rfq_delta = 0, in_transaction;
- 
- 	switch (pkt->type) {
- 
-@@ -940,8 +940,11 @@ static bool handle_client_work(PgSocket *client, PktHdr *pkt)
++	bool in_transaction = false;
+ 	int track_outstanding = false;
+ 	PreparedStatementAction ps_action = PS_IGNORE;
+ 	PgClosePacket close_packet;
+@@ -1495,8 +1496,11 @@ static bool handle_client_work(PgSocket *client, PktHdr *pkt)
  		client->query_start = get_cached_time();
  	}
  
@@ -35,15 +23,14 @@
  		client->pool->stats.xact_count++;
  		client->xact_start = client->query_start;
  	}
-@@ -949,6 +952,14 @@ static bool handle_client_work(PgSocket *client, PktHdr *pkt)
+@@ -1504,6 +1508,13 @@ static bool handle_client_work(PgSocket *client, PktHdr *pkt)
  	if (client->pool->db->admin)
  		return admin_handle_client(client, pkt);
  
 +	/* pgbouncer-rr extensions: query rewrite & client connection routing */
 +	if (pkt->type == 'Q' || pkt->type == 'P') {
-+		if (!rewrite_query(client, in_transaction, pkt)) {
++		if (!rewrite_query(client, in_transaction, pkt))
 +			return false;
-+		}
 +		route_client_connection(client, in_transaction, pkt);
 +	}
 +

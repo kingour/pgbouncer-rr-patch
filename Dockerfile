@@ -5,8 +5,8 @@ RUN yum install -y tar net-tools curl vim unzip less libevent-devel openssl-deve
 # Install pandoc
 RUN wget https://github.com/jgm/pandoc/releases/download/3.1.6.2/pandoc-3.1.6.2-linux-amd64.tar.gz && \
     tar xvzf ./pandoc-3.1.6.2-linux-amd64.tar.gz --strip-components 1 -C /usr/local
-RUN git clone https://github.com/pgbouncer/pgbouncer.git --branch "stable-1.19" && \
-    git clone https://github.com/awslabs/pgbouncer-rr-patch.git && \
+RUN git clone https://github.com/pgbouncer/pgbouncer.git --branch "stable-1.23" && \
+    git clone https://github.com/pchaseh/pgbouncer-rr-patch.git && \
     cd pgbouncer-rr-patch && \
     ./install-pgbouncer-rr-patch.sh ../pgbouncer && \
     cd ../pgbouncer && \
