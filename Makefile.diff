@@ -1,5 +1,5 @@
---- Makefile	2025-12-04 02:03:14
-+++ Makefile	2025-12-09 16:06:23
+--- ../pgbouncer/Makefile	2025-12-04 02:03:14
++++ ./Makefile	2025-12-09 16:06:23
 @@ -23,7 +23,10 @@ pgbouncer_SOURCES = \
  	src/scram.c \
  	src/server.c \
