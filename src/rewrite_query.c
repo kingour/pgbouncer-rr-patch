@@ -263,9 +263,18 @@ bool is_rewritten(char *query) {
 		fatal_perror("malloc");
 	}
 	sprintf(tag, rewritten_template, getpid());
-	if (strstr(query + strlen(query) - strlen(tag), tag) == query){
+    int query_len = strlen(query);
+    int tag_len = strlen(tag);
+
+    // check start
+	if (strstr(query + query_len - tag_len, tag) == query){
 		is_tagged = true;
 	}
+    // check end
+    if (query_len >= tag_len &&
+        strcmp(query + query_len - tag_len, tag) == 0) {
+		is_tagged = true;
+    }
 	free(tag);
 	return is_tagged;
 }
