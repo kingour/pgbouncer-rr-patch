@@ -80,16 +80,17 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 
     if (unlikely(cf_verbose > 0)) {
 	    loggable_query_str = strip_newlines(query_str) ;
-	    slog_debug(client, "rewrite_query: Username => %s", client->login_user_credentials->name);
-	    slog_debug(client, "rewrite_query: Orig Query=> %s", loggable_query_str);
+	    slog_debug(client, "rewrite_query: Username => %s, Orig Query=> %s",
+		       client->login_user_credentials->name, loggable_query_str);
 	    free(loggable_query_str);
 	}
 
 	/* call python function to rewrite the query */
 	tmp_new_query_str = pycall(client, client->login_user_credentials->name, query_str, in_transaction, cf_rewrite_query_py_module_file,
 			"rewrite_query");
-	if (tmp_new_query_str == NULL) {
+	if (tmp_new_query_str == NULL || strcmp(tmp_new_query_str, query_str) == 0) {
 		slog_debug(client, "query unchanged");
+		free(tmp_new_query_str);
 		return true;
 	}
 	new_query_str = tag_rewritten(tmp_new_query_str);
@@ -98,8 +99,11 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 	slog_debug(client, "rewrite_query: New => %s", loggable_query_str);
 	free(loggable_query_str);
 
+	int new_query_len = strlen(new_query_str);
+	int orig_query_len = strlen(query_str);
+
 	/* new query must fit in the buffer */
-	if ((int)(sbuf->io->recv_pos + strlen(new_query_str) - strlen(query_str)) > (int)cf_sbuf_len) {
+	if ((int)(sbuf->io->recv_pos + new_query_len - orig_query_len) > (int)cf_sbuf_len) {
 		slog_error(client,
 				"Rewritten query will not fit into the allocated buffer!");
 		free(new_query_str);
@@ -123,7 +127,7 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 	/* packet type */
 	new_io_buf[i++] = pkt->type;
 	/* packet length */
-	new_pkt_len = pkt->len + strlen(new_query_str) - strlen(query_str) - 1;
+	new_pkt_len = pkt->len + new_query_len - orig_query_len - 1;
 	new_io_buf[i++] = (new_pkt_len >> 24) & 255;
 	new_io_buf[i++] = (new_pkt_len >> 16) & 255;
 	new_io_buf[i++] = (new_pkt_len >> 8) & 255;
@@ -135,9 +139,9 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 	}
 	/* query string */
 	strcpy(&new_io_buf[i], new_query_str);
-	i += strlen(new_query_str) + 1;
+	i += new_query_len + 1;
 	/* copy everything else in buffer */
-	remaining_buffer_ptr = query_str + strlen(query_str) + 1;
+	remaining_buffer_ptr = query_str + orig_query_len + 1;
 	remaining_buffer_len = (char *) &sbuf->io->buf[sbuf->io->recv_pos]
 			- remaining_buffer_ptr;
 	memcpy(&new_io_buf[i], remaining_buffer_ptr, remaining_buffer_len);
@@ -266,11 +270,6 @@ bool is_rewritten(char *query) {
     int query_len = strlen(query);
     int tag_len = strlen(tag);
 
-    // check start
-	if (strstr(query + query_len - tag_len, tag) == query){
-		is_tagged = true;
-	}
-    // check end
     if (query_len >= tag_len &&
         strcmp(query + query_len - tag_len, tag) == 0) {
 		is_tagged = true;

@@ -30,8 +30,9 @@ char *pycall(PgSocket *client, char *username, char *query_str, int in_transacti
         return NULL;
     }
 
-    sprintf(py_path_env, "PYTHONPATH=%s", dir);
-    putenv(py_path_env);
+    setenv("PYTHONPATH", dir, 1);
+    free(py_path_env);
+    py_path_env = NULL;
 
     /* --- Derive module name --- */
     char *file_tmp = strdup(py_file);
@@ -80,8 +81,9 @@ char *pycall(PgSocket *client, char *username, char *query_str, int in_transacti
     PyTuple_SetItem(pArgs, 0, PyString_FromString(username));
     PyTuple_SetItem(pArgs, 1, PyString_FromString(query_str));
 #endif
-    PyTuple_SetItem(pArgs, 2, in_transaction ? Py_True : Py_False);
-    Py_INCREF(in_transaction ? Py_True : Py_False);
+    PyObject *bool_val = in_transaction ? Py_True : Py_False;
+    Py_INCREF(bool_val);
+    PyTuple_SetItem(pArgs, 2, bool_val);
 
     /* --- Call the Python function --- */
     pValue = PyObject_CallObject(pFunc, pArgs);
@@ -125,6 +127,8 @@ finish:
         slog_error(client, "Python error: %s", PyString_AsString(repr));
 #endif
         Py_XDECREF(repr);
+        Py_XDECREF(ptype);
+        Py_XDECREF(ptraceback);
     }
 
     /* --- Cleanup --- */
