@@ -1,9 +1,8 @@
---- ../pgbouncer/include/bouncer.h	2020-04-26 15:20:51.657323344 -0400
-+++ ./include/bouncer.h	2020-04-26 14:57:50.252491469 -0400
-@@ -97,12 +97,17 @@ typedef union PgAddr PgAddr;
- typedef enum SocketState SocketState;
- typedef struct PktHdr PktHdr;
- typedef struct ScramState ScramState;
+diff --git a/include/bouncer.h b/include/bouncer.h
+index 36315df..fb736bf 100644
+--- a/include/bouncer.h
++++ b/include/bouncer.h
+@@ -165,6 +165,11 @@ typedef enum ReplicationType ReplicationType;
  
  extern int cf_sbuf_len;
  
@@ -15,13 +14,7 @@
  #include "util.h"
  #include "iobuf.h"
  #include "sbuf.h"
- #include "pktbuf.h"
- #include "varcache.h"
- #include "dnslookup.h"
-@@ -512,12 +517,17 @@ extern int cf_tcp_user_timeout;
- 
- extern int cf_log_connections;
- extern int cf_log_disconnections;
+@@ -834,6 +839,11 @@ extern int cf_log_disconnections;
  extern int cf_log_pooler_errors;
  extern int cf_application_name_add_host;
  
@@ -33,6 +26,3 @@
  extern int cf_client_tls_sslmode;
  extern char *cf_client_tls_protocols;
  extern char *cf_client_tls_ca_file;
- extern char *cf_client_tls_cert_file;
- extern char *cf_client_tls_key_file;
- extern char *cf_client_tls_ciphers;

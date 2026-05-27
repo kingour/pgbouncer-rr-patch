@@ -19,35 +19,39 @@
 # ensure all dbkey values are defined in [database] section of the pgbouncer ini file 
 # Test by calling routing_rules() with sample queries, and validating dbkey values returned
 routingtable = {
-	'route' : [{
-			'usernameRegex' : '.*',
-			'queryRegex' : '.*tablea.*',
-			'dbkey' : 'dev.1'
-		}, {
-			'usernameRegex' : '.*',
-			'queryRegex' : '.*tableb.*',
-			'dbkey' : 'dev.2'
-		}
-	],
-	'default' : None
+    'route': [{
+        'usernameRegex': '.*',
+        'queryRegex': '.*tablea.*',
+        'dbkey': 'dev.1'
+    }, {
+        'usernameRegex': '.*',
+        'queryRegex': '.*tableb.*',
+        'dbkey': 'dev.2'
+    }
+    ],
+    'default': None
 }
-
 
 # ROUTING FN - CALLED FROM PGBOUNCER-RR - DO NOT CHANGE NAME
 # IMPLEMENTS REGEX RULES DEFINED IN ROUTINGTABLE OBJECT
 # RETURNS FIRST MATCH FOUND
 import re
-def routing_rules(username, query):
-	for route in routingtable['route']:
-		u = re.compile(route['usernameRegex'])
-		q = re.compile(route['queryRegex'])
-		if u.search(username) and q.search(query):
-			return route['dbkey']
-	return routingtable['default']
+
+
+def routing_rules(*args):
+    username = args[0]
+    query = args[1]
+    in_transaction = 0
+    if len(args) == 3:
+        in_transaction = args[2]
+    for route in routingtable['route']:
+        u = re.compile(route['usernameRegex'])
+        q = re.compile(route['queryRegex'])
+        if u.search(username) and q.search(query):
+            return route['dbkey']
+    return routingtable['default']
+
 
 if __name__ == "__main__":
-    print "test for tablea:" + routing_rules("master", "select * from tablea;")
-    print "test for tableb:" + routing_rules("master", "select * from tableb;")
-    
-
-
+    print ("test for tablea:" + routing_rules("master", "select * from tablea;"))
+    print ("test for tableb:" + routing_rules("master", "select * from tableb;"))

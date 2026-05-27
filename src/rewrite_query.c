@@ -1,12 +1,12 @@
 /*
 Copyright 2015-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-Licensed under the Amazon Software License (the "License"). 
+Licensed under the Amazon Software License (the "License").
 You may not use this file except in compliance with the License. A copy of the License is located at
 
     http://aws.amazon.com/asl/
 
-or in the "license" file accompanying this file. 
+or in the "license" file accompanying this file.
 This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, express or implied. See the License for the specific language governing permissions and limitations under the License.
 */
 
@@ -18,20 +18,26 @@ This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS O
 #include "bouncer.h"
 #include <usual/pgutil.h>
 
+typedef enum {
+  kIncompletePacketDecisionContinue = 0,
+  kIncompletePacketDecisionDisable = 1,
+  kIncompletePacketDecisionDefer = 2,
+} IncompletePacketDecision;
+
 /* private function prototypes */
-char *call_python_rewrite_query(PgSocket *client, char *query_str);
+char *call_python_rewrite_query(PgSocket *client, char *query_str, int in_transaction);
 void printHex(void *buffer, const unsigned int n);
 char *strip_newlines(char *s);
 bool is_rewrite_enabled(PgSocket *client);
-bool handle_incomplete_packet(PgSocket *client, PktHdr *pkt);
-bool handle_failure(PgSocket *client);
+IncompletePacketDecision handle_incomplete_packet(PgSocket *client, PktHdr *pkt);
+IncompletePacketDecision handle_failure(PgSocket *client);
 char *tag_rewritten(char *query);
 bool is_rewritten(char *query);
 
 /* rewrite_query:
  * applied to packets of type 'Q' (Query) and 'P' (Prepare) only
  */
-bool rewrite_query(PgSocket *client, PktHdr *pkt) {
+bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 	SBuf *sbuf = &client->sbuf;
 	char *pkt_start;
 	char *stmt_str="", *query_str, *loggable_query_str, *tmp_new_query_str, *new_query_str;
@@ -41,7 +47,14 @@ bool rewrite_query(PgSocket *client, PktHdr *pkt) {
 	int i;
 
 	if (!is_rewrite_enabled(client)) return true;
-	if (!handle_incomplete_packet(client, pkt)) return false;
+	switch (handle_incomplete_packet(client, pkt)) {
+	case kIncompletePacketDecisionDisable:
+	    return true;
+	case kIncompletePacketDecisionDefer:
+	    return false;
+	case kIncompletePacketDecisionContinue:
+	    ;  // no-op
+	}
 
 	/* extract query string from packet */
 	/* first byte is the packet type (which we already know)
@@ -65,13 +78,15 @@ bool rewrite_query(PgSocket *client, PktHdr *pkt) {
 	/* don't process same query again */
 	if (is_rewritten(query_str)) return true;
 
-	loggable_query_str = strip_newlines(query_str) ;
-	slog_debug(client, "rewrite_query: Username => %s", client->auth_user->name);
-	slog_debug(client, "rewrite_query: Orig Query=> %s", loggable_query_str);
-	free(loggable_query_str);
+    if (unlikely(cf_verbose > 0)) {
+	    loggable_query_str = strip_newlines(query_str) ;
+	    slog_debug(client, "rewrite_query: Username => %s", client->login_user_credentials->name);
+	    slog_debug(client, "rewrite_query: Orig Query=> %s", loggable_query_str);
+	    free(loggable_query_str);
+	}
 
 	/* call python function to rewrite the query */
-	tmp_new_query_str = pycall(client, client->auth_user->name, query_str, cf_rewrite_query_py_module_file,
+	tmp_new_query_str = pycall(client, client->login_user_credentials->name, query_str, in_transaction, cf_rewrite_query_py_module_file,
 			"rewrite_query");
 	if (tmp_new_query_str == NULL) {
 		slog_debug(client, "query unchanged");
@@ -88,7 +103,13 @@ bool rewrite_query(PgSocket *client, PktHdr *pkt) {
 		slog_error(client,
 				"Rewritten query will not fit into the allocated buffer!");
 		free(new_query_str);
-		return handle_failure(client);
+		switch (handle_failure(client)) {
+		case kIncompletePacketDecisionDisable:
+		case kIncompletePacketDecisionContinue:
+		    return true;
+		case kIncompletePacketDecisionDefer:
+		    return false;
+		}
 	}
 
 	/* manipulate the buffer to replace query */
@@ -150,7 +171,7 @@ bool is_rewrite_enabled(PgSocket *client) {
  *     - disconnect client (if rewrite_query_disconnect_on_failure = true)
  *  - if buffer is not too small, return false and allow main loop to wait for rest of packet
  */
-bool handle_incomplete_packet(PgSocket *client, PktHdr *pkt) {
+IncompletePacketDecision handle_incomplete_packet(PgSocket *client, PktHdr *pkt) {
 	if (incomplete_pkt(pkt)) {
 		slog_warning(client, "Unable to rewrite query - buffer does not contain full query packet");
 		slog_warning(client, "Buffer len -> %d, Pkt len -> %d", mbuf_written(&pkt->data), pkt->len);
@@ -164,10 +185,10 @@ bool handle_incomplete_packet(PgSocket *client, PktHdr *pkt) {
 		} else {
 			/* there is room in the buffer - let's wait for rest of packet */
 			slog_warning(client, "Wait for rest of packet to arrive");
-			return false;
+			return kIncompletePacketDecisionDefer;
 		}
 	}
-	return true;
+	return kIncompletePacketDecisionContinue;
 }
 
 /*
@@ -176,16 +197,16 @@ bool handle_incomplete_packet(PgSocket *client, PktHdr *pkt) {
  * or disconnect client
  * based on rewrite_query_disconnect_on_failure setting
  */
-bool handle_failure(PgSocket *client) {
+IncompletePacketDecision handle_failure(PgSocket *client) {
 	if (strcmp(cf_rewrite_query_disconnect_on_failure, "false") == 0) {
 		/* return true without rewriting query */
 		slog_error(client, "Preserving original query");
-		return true;
+		return kIncompletePacketDecisionDisable;
 	} else {
 		/* disconnect client */
 		slog_error(client, "Disconnecting client");
 		disconnect_client(client, false, "Rewrite Query failure - query too large for buffer - disconnecting");
-		return false;
+		return kIncompletePacketDecisionDefer;
 	}
 }
 
@@ -206,19 +227,32 @@ char *strip_newlines(char *s) {
 	return n;
 }
 
+#define rewritten_template "rewritten_pid='%05d'*/"
+
 /* query tagging to prevent multiple rewrite */
 char *tag_rewritten(char *query) {
 	char *tag = malloc(64);
-	char *taggedQuery ;
+	char *taggedQuery;
+	int len, offset;
 	if (tag == NULL) {
 		fatal_perror("malloc");
 	}
-	sprintf(tag,"/* rewritten: pid=%05d */ ", getpid());
-	taggedQuery = malloc(strlen(tag)+strlen(query)+1);
+    len = strlen(query);
+    if (len > 2 && query[len - 2] == '*' && query[len - 1] == '/') {
+	  tag[0] = ',';
+	  offset = 1;
+	} else {
+	  tag[0] = '/';
+	  tag[1] = '*';
+	  offset = 2;
+	}
+	sprintf(tag + offset, rewritten_template, getpid());
+	taggedQuery = malloc(strlen(tag) + strlen(query) + 1);
 	if (taggedQuery == NULL) {
 		fatal_perror("malloc");
 	}
-	sprintf(taggedQuery, "%s%s", tag, query);
+	strcpy(taggedQuery, query);
+	strcpy(taggedQuery + len - (2 - offset) * 2, tag);
 	free(tag);
 	return taggedQuery;
 }
@@ -228,10 +262,19 @@ bool is_rewritten(char *query) {
 	if (tag == NULL) {
 		fatal_perror("malloc");
 	}
-	sprintf(tag,"/* rewritten: pid=%05d */ ", getpid());
-	if (strstr(query,tag) == query){
+	sprintf(tag, rewritten_template, getpid());
+    int query_len = strlen(query);
+    int tag_len = strlen(tag);
+
+    // check start
+	if (strstr(query + query_len - tag_len, tag) == query){
 		is_tagged = true;
 	}
+    // check end
+    if (query_len >= tag_len &&
+        strcmp(query + query_len - tag_len, tag) == 0) {
+		is_tagged = true;
+    }
 	free(tag);
 	return is_tagged;
 }
