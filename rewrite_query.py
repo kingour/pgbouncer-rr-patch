@@ -28,8 +28,8 @@ def rewrite_query(*args):
     if len(args) == 3:
         in_transaction = args[2]
     # Query 1
-    q1 = "SELECT storename, SUM\(total\) FROM sales JOIN store USING \(storeid\) GROUP BY storename ORDER BY storename"
-    q2 = "SELECT prodname, SUM\(total\) FROM sales JOIN product USING \(productid\) GROUP BY prodname ORDER BY prodname"
+    q1 = r"SELECT storename, SUM\(total\) FROM sales JOIN store USING \(storeid\) GROUP BY storename ORDER BY storename"
+    q2 = r"SELECT prodname, SUM\(total\) FROM sales JOIN product USING \(productid\) GROUP BY prodname ORDER BY prodname"
     if re.match(q1, query):
         new_query = "SELECT storename, SUM(total) FROM store_sales GROUP BY storename ORDER BY storename;"
     elif re.match(q2, query):
@@ -41,7 +41,7 @@ def rewrite_query(*args):
 
 if __name__ == "__main__":
     # some tests
-    print rewrite_query("master",
-                        "SELECT storename, SUM(total) FROM sales JOIN store USING (storeid) GROUP BY storename ORDER BY storename;")
-    print rewrite_query("master",
-                        "SELECT prodname, SUM(total) FROM sales JOIN product USING (productid) GROUP BY prodname ORDER BY prodname;")
+    print(rewrite_query("master",
+                        "SELECT storename, SUM(total) FROM sales JOIN store USING (storeid) GROUP BY storename ORDER BY storename;"))
+    print(rewrite_query("master",
+                        "SELECT prodname, SUM(total) FROM sales JOIN product USING (productid) GROUP BY prodname ORDER BY prodname;"))

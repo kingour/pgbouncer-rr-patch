@@ -20,19 +20,26 @@
  	include/util.h \
  	include/varcache.h \
  	include/common/ascii.h \
-@@ -81,7 +87,10 @@
+@@ -81,7 +87,17 @@
  	include/common/uthash.h \
  	include/common/uthash_lowercase.h
  
 -pgbouncer_CPPFLAGS = -Iinclude $(CARES_CFLAGS) $(LIBEVENT_CFLAGS) $(TLS_CPPFLAGS)
 +PYTHON_CONFIG ?= python3-config
-+python_CPPFLAGS = $(shell $(PYTHON_CONFIG) --includes)
-+python_LDFLAGS = $(shell $(PYTHON_CONFIG) --embed --ldflags | sed 's/-framework /-Wl,-framework,/g')
++python_CPPFLAGS := $(shell $(PYTHON_CONFIG) --includes || echo PYTHON_CONFIG_FAILED)
++ifneq ($(findstring PYTHON_CONFIG_FAILED,$(python_CPPFLAGS)),)
++$(error Cannot get Python includes from $(PYTHON_CONFIG))
++endif
++# Python < 3.8 has no --embed; keep library flags after objects in LDADD.
++python_LDFLAGS := $(shell if flags=$$($(PYTHON_CONFIG) --embed --ldflags 2>/dev/null) || flags=$$($(PYTHON_CONFIG) --ldflags); then printf '%s\n' "$$flags" | sed 's/-framework /-Wl,-framework,/g'; else echo PYTHON_CONFIG_FAILED; fi)
++ifneq ($(findstring PYTHON_CONFIG_FAILED,$(python_LDFLAGS)),)
++$(error Cannot get Python embedding flags from $(PYTHON_CONFIG))
++endif
 +pgbouncer_CPPFLAGS = -Iinclude $(CARES_CFLAGS) $(LIBEVENT_CFLAGS) $(TLS_CPPFLAGS) $(python_CPPFLAGS)
  
  # include libusual sources directly
  AM_FEATURES = libusual
-@@ -101,7 +110,7 @@
+@@ -101,7 +117,7 @@
  dist_man_MANS = doc/pgbouncer.1 doc/pgbouncer.5
  
  pgbouncer_LDFLAGS := $(TLS_LDFLAGS)

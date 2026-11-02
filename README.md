@@ -238,9 +238,26 @@ make
 sudo make install
 ```
 
-The Makefile patch uses `python3-config --includes` and `python3-config --embed --ldflags`
-(requires Python 3.8 or newer and its development files). To select another Python
-installation, build with `make PYTHON_CONFIG=/path/to/python3-config`.
+The Makefile patch defaults to `python3-config`. It obtains headers with
+`--includes`, tries `--embed --ldflags` for Python 3.8+, and falls back to
+`--ldflags` for older Python, including Python 2.7 and 3.6. Configuration failures
+stop Make instead of silently dropping the embedding flags. Install the matching
+Python development headers and library.
+
+On CentOS 7, select the existing installation explicitly, for example:
+
+```bash
+make PYTHON_CONFIG=/usr/bin/python2.7-config
+# Or, for an installed Python 3.6 development package:
+make PYTHON_CONFIG=/usr/bin/python3.6-config
+```
+
+Use the actual config-tool path provided by your development package. Remove
+build-script logic that rewrites Python version strings in `Makefile.diff`;
+pass `PYTHON_CONFIG` to Make instead. Do not change the system `python` symlink.
+When switching Python installations, run `make clean` before rebuilding. Check
+`ldd ./pgbouncer` on CentOS for missing runtime libraries. These flags support
+legacy Python selection; they do not replace a CentOS 7 build/runtime test.
 
 **Configure**
 Create a configuration file, using `./pgbouncer-example.ini` as a starting point, adding your own database connections and python routing rules / rewrite query functions.
@@ -311,6 +328,7 @@ revision without modifying that checkout:
 bash tests/install-patch.sh /path/to/pgbouncer pgbouncer_1_26_1
 # Or test a local branch/revision explicitly:
 bash tests/install-patch.sh /path/to/pgbouncer develop
+python3 tests/python-config.py
 ```
 
 The revision must exist in the local upstream repository. This check applies the
