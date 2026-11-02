@@ -19,9 +19,9 @@ index dae779f..ad6c3c1 100644
  	CF_ABS("reserve_pool_timeout", CF_TIME_USEC, cf_res_pool_timeout, 0, "5"),
  	CF_ABS("resolv_conf", CF_STR, cf_resolv_conf, CF_NO_RELOAD, ""),
 +	/* pgbouncer-rr extensions */
-+	CF_ABS("routing_rules_py_module_file", CF_STR, cf_routing_rules_py_module_file, 0, "not_enabled"),
-+	CF_ABS("rewrite_query_py_module_file", CF_STR, cf_rewrite_query_py_module_file, 0, "not_enabled"),
 +	CF_ABS("rewrite_query_disconnect_on_failure", CF_STR, cf_rewrite_query_disconnect_on_failure, 0, "false"),
++	CF_ABS("rewrite_query_py_module_file", CF_STR, cf_rewrite_query_py_module_file, 0, "not_enabled"),
++	CF_ABS("routing_rules_py_module_file", CF_STR, cf_routing_rules_py_module_file, 0, "not_enabled"),
  	CF_ABS("sbuf_loopcnt", CF_INT, cf_sbuf_loopcnt, 0, "5"),
  	CF_ABS("server_check_delay", CF_TIME_USEC, cf_server_check_delay, 0, "30"),
  	CF_ABS("server_check_query", CF_STR, cf_server_check_query, 0, "select 1"),

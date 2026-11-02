@@ -6,7 +6,24 @@ This repository is a fork of [pgbouncer-fast-switchover](https://github.com/awsl
 As such, I claim no credit with regards to pgbouncer-rr. All rights are held by Amazon, and my sole intent is to bring the routing/rewriting functionality provided by the original authors to newer pgbouncer versions.
 
 ## Support
-This patch currently targets pgbouncer 1.23
+This patch targets PgBouncer 1.26.1 and the 1.26 development sources.
+
+It also includes the local PROXY protocol v1 customization: optional TCP4,
+TCP6 and UNKNOWN headers, client IP logging, and compatibility with direct
+clients and SSL negotiation. Enable it with `proxy_protocol = 1` only on
+listeners restricted to trusted proxies. The reported IP is for logging;
+authentication and access control continue to use the connection's peer address.
+
+The installer applies `proxy-protocol.diff` before the RR hooks, or skips it
+when the complete customization is already installed. This includes the
+configuration reference, sample setting, eight PROXY regression cases and local
+tool ignore rules. It also applies `format-cmake.diff` when `dev/format.sh` is
+present, so the pinned formatter builds with CMake 4. Python embedding and RR
+build integration continue to use the Autoconf/Makefile build.
+
+After building the patched source, run `pytest test/test_misc.py -k proxy_protocol`
+and `pytest test/test_proxy_rr.py` to verify PROXY handling and its interaction
+with query rewriting and routing.
 
 ## Overview
 

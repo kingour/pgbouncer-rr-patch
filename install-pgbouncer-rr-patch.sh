@@ -28,6 +28,26 @@ PGDIR=$1
 PATCHDIR=$(pwd)
 patchstatus=0
 
+# Keep the local PgBouncer customizations separate from the RR hooks. Accept
+# an upstream tree or a tree that already contains the complete custom patch.
+apply_custom_patch() {
+   local patchfile="$PATCHDIR/$1"
+   if git -C "$PGDIR" apply --check "$patchfile" >/dev/null 2>&1; then
+      git -C "$PGDIR" apply "$patchfile" || return 1
+   elif git -C "$PGDIR" apply --reverse --check "$patchfile" >/dev/null 2>&1; then
+      echo "Already installed: $1"
+   else
+      echo "Cannot apply $1: target contains incompatible or partial changes." >&2
+      return 1
+   fi
+}
+
+apply_custom_patch proxy-protocol.diff || exit 1
+apply_custom_patch rr-config.diff || exit 1
+if [ -f "$PGDIR/dev/format.sh" ]; then
+   apply_custom_patch format-cmake.diff || exit 1
+fi
+
 # Patch each modified file
 MERGEFILES="\
    Makefile\
@@ -69,6 +89,7 @@ do
    cp $PATCHDIR/$file $PGDIR/$file || patchstatus=1
 done
 echo
+cp "$PATCHDIR/tests/test_proxy_rr.py" "$PGDIR/test/test_proxy_rr.py" || patchstatus=1
 
 if [ $patchstatus -eq 1 ]; then
    echo "Failures encountered during merge of pgbouncer-rr with pgbouncer."

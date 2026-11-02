@@ -1,0 +1,232 @@
+diff --git a/.gitignore b/.gitignore
+index cf90354..18c4345 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -40,3 +40,6 @@ venv
+ /uncrustify
+ 
+ __pycache__/
++.idea
++.omc
++.claude
+diff --git a/doc/config.md b/doc/config.md
+index 70c3fbb..02b2e2a 100644
+--- a/doc/config.md
++++ b/doc/config.md
+@@ -46,6 +46,20 @@ Which port to listen on. Applies to both TCP and Unix sockets.
+ 
+ Default: 6432
+ 
++### proxy_protocol
++
++Accept an optional PROXY protocol v1 header before the PostgreSQL startup
++packet. When enabled, the source address from a TCP4 or TCP6 header is included
++in connection log prefixes. Connections without a PROXY header, including
++direct connections and SSL negotiation, continue to work normally.
++
++The reported address is used only for logging; it does not replace the peer
++address used for authentication or access control. Only enable this setting
++when incoming connections are restricted to trusted proxies, since clients can
++otherwise supply arbitrary source addresses in their headers.
++
++Default: 0 (disabled)
++
+ ### unix_socket_dir
+ 
+ Specifies the location for Unix sockets. Applies to both the listening socket and to
+diff --git a/etc/pgbouncer.ini b/etc/pgbouncer.ini
+index 0e50c75..70183ef 100644
+--- a/etc/pgbouncer.ini
++++ b/etc/pgbouncer.ini
+@@ -56,6 +56,10 @@ pidfile = /var/run/pgbouncer/pgbouncer.pid
+ listen_addr = localhost
+ listen_port = 6432
+ 
++;; Accept optional PROXY protocol v1 headers and log the reported client IP.
++;; Enable only for connections from trusted proxies; direct clients still work.
++;proxy_protocol = 0
++
+ ;; On Debian it should be /var/run/postgresql
+ ;unix_socket_dir = /tmp
+ ;unix_socket_mode = 0777
+diff --git a/include/bouncer.h b/include/bouncer.h
+index 88ea46e..59af822 100644
+--- a/include/bouncer.h
++++ b/include/bouncer.h
+@@ -734,6 +734,7 @@ struct PgSocket {
+ 	/* server: received an ErrorResponse, waiting for ReadyForQuery to clear
+ 	 * the outstanding requests until the next Sync */
+ 	bool query_failed : 1;
++	bool proxy_header_parsed : 1;	/* PROXY protocol header consumed */
+ 
+ 	ReplicationType replication;	/* If this is a replication connection */
+ 	char *startup_options;	/* only tracked for replication connections */
+@@ -750,6 +751,7 @@ struct PgSocket {
+ 
+ 	PgAddr remote_addr;	/* ip:port for remote endpoint */
+ 	PgAddr local_addr;	/* ip:port for local endpoint */
++	char proxy_client_addr[64];	/* real client IP from PROXY protocol header */
+ 
+ 	char *host;
+ 
+@@ -911,6 +913,7 @@ extern int cf_log_connections;
+ extern int cf_log_disconnections;
+ extern int cf_log_pooler_errors;
+ extern int cf_application_name_add_host;
++extern int cf_proxy_protocol;
+ 
+ extern int cf_client_tls_sslmode;
+ extern char *cf_client_tls_protocols;
+diff --git a/src/client.c b/src/client.c
+index 7446f70..be3cbe5 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -1800,6 +1800,47 @@ bool client_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+ 		disconnect_server(client->link, false, "server connection closed");
+ 		break;
+ 	case SBUF_EV_READ:
++		/* parse PROXY protocol v1 header if enabled */
++		if (cf_proxy_protocol && !client->proxy_header_parsed) {
++			const uint8_t *raw = client->sbuf.io->buf + client->sbuf.io->parse_pos;
++			unsigned avail = client->sbuf.io->recv_pos - client->sbuf.io->parse_pos;
++			unsigned i;
++			/* Wait until we have enough bytes to identify the signature */
++			if (avail < 6)
++				return false;
++			/* Auto-detect: if no PROXY signature, treat as a direct connection
++			* and fall through to normal packet processing without skipping. */
++			if (memcmp(raw, "PROXY ", 6) != 0) {
++				client->proxy_header_parsed = true;
++				goto process_packet;
++			}
++			for (i = 0; i + 1 < avail; i++) {
++				if (raw[i] == '\r' && raw[i + 1] == '\n')
++					break;
++			}
++			if (i + 1 >= avail) {
++				if (avail >= 108)
++					disconnect_client(client, true, "PROXY protocol header too long");
++				return false;
++			}
++			if (i < 107) {
++				char line[108], proto[16], src_ip[64], dst_ip[64];
++				int src_port, dst_port;
++				memcpy(line, raw, i);
++				line[i] = '\0';
++				if (sscanf(line, "PROXY %15s %63s %63s %d %d",
++					   proto, src_ip, dst_ip, &src_port, &dst_port) == 5 &&
++				    strcmp(proto, "UNKNOWN") != 0) {
++					snprintf(client->proxy_client_addr,
++						 sizeof(client->proxy_client_addr),
++						 "%s", src_ip);
++				}
++			}
++			client->proxy_header_parsed = true;
++			sbuf_prepare_skip(&client->sbuf, i + 2);
++			return true;
++		}
++process_packet:
+ 		/* Wait until full packet headers is available. */
+ 		if (incomplete_header(data)) {
+ 			slog_noise(client, "C: got partial header, trying to wait a bit");
+diff --git a/src/main.c b/src/main.c
+index f41130a..1ce8b8b 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -183,6 +183,7 @@ int cf_log_connections;
+ int cf_log_disconnections;
+ int cf_log_pooler_errors;
+ int cf_application_name_add_host;
++int cf_proxy_protocol;
+ 
+ int cf_client_tls_sslmode;
+ char *cf_client_tls_protocols;
+@@ -311,6 +312,7 @@ static const struct CfKey bouncer_params [] = {
+ 	CF_ABS("pkt_buf", CF_INT, cf_sbuf_len, CF_NO_RELOAD, "4096"),
+ 	CF_ABS("pool_idle_timeout", CF_TIME_USEC, cf_pool_idle_timeout, 0, "0"),
+ 	CF_ABS("pool_mode", CF_LOOKUP(pool_mode_map), cf_pool_mode, 0, "session"),
++	CF_ABS("proxy_protocol", CF_INT, cf_proxy_protocol, 0, "0"),
+ 	CF_ABS("query_timeout", CF_TIME_USEC, cf_query_timeout, 0, "0"),
+ 	CF_ABS("query_wait_notify", CF_INT, cf_query_wait_notify, 0, "5"),
+ 	CF_ABS("query_wait_timeout", CF_TIME_USEC, cf_query_wait_timeout, 0, "120"),
+diff --git a/src/util.c b/src/util.c
+index b280a7e..f965282 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -63,7 +63,15 @@ int log_socket_prefix(enum LogLevel lev, void *ctx, char *dst, unsigned int dstl
+ 		host = pga_ntop(&sock->remote_addr, host6, sizeof(host6));
+ 	}
+ 
+-	if (pga_family(&sock->remote_addr) == AF_INET6) {
++	if (sock->proxy_client_addr[0]) {
++		/* PROXY protocol: show real_ip:nginx_ip:port */
++		if (peer_id) {
++			return snprintf(dst, dstlen, "%c-%p: peer-%d@%s:%s:%d ",
++					stype, sock, peer_id, sock->proxy_client_addr, host, port);
++		}
++		return snprintf(dst, dstlen, "%c-%p: %s/%s@%s:%s:%d ",
++				stype, sock, db, user, sock->proxy_client_addr, host, port);
++	} else if (pga_family(&sock->remote_addr) == AF_INET6) {
+ 		if (peer_id) {
+ 			return snprintf(dst, dstlen, "%c-%p: peer-%d@[%s]:%d ",
+ 					stype, sock, peer_id, host, port);
+diff --git a/test/test_misc.py b/test/test_misc.py
+index a595258..8be44d6 100644
+--- a/test/test_misc.py
++++ b/test/test_misc.py
+@@ -618,6 +618,55 @@ def _read_message(stream):
+     return message_type, stream.read(message_length - 4)
+ 
+ 
++@pytest.mark.parametrize(
++    "header,real_ip",
++    [
++        (b"PROXY TCP4 192.0.2.10 127.0.0.1 12345 6432\r\n", "192.0.2.10"),
++        (b"PROXY TCP6 2001:db8::10 ::1 12345 6432\r\n", "2001:db8::10"),
++        (b"PROXY UNKNOWN\r\n", None),
++    ],
++)
++@pytest.mark.parametrize("fragmented", [False, True])
++def test_proxy_protocol(bouncer, header, real_ip, fragmented):
++    bouncer.admin("set proxy_protocol = 1")
++    startup = _startup_packet(b"puser1", b"p0")
++    with socket.create_connection((bouncer.host, bouncer.port), timeout=3) as sock:
++        if fragmented:
++            # Force the parser to wait for both the signature and CRLF.
++            for part in (header[:3], header[3:-1]):
++                sock.sendall(part)
++                with pytest.raises(socket.timeout):
++                    sock.recv(1)
++            sock.sendall(header[-1:] + startup)
++        else:
++            sock.sendall(header + startup)
++        with sock.makefile("rb") as stream:
++            while True:
++                message_type, message = _read_message(stream)
++                assert message_type != b"E", message
++                if message_type == b"Z":
++                    break
++            query = b"select 1\0"
++            sock.sendall(b"Q" + struct.pack("!I", len(query) + 4) + query)
++            rows = []
++            while True:
++                message_type, message = _read_message(stream)
++                assert message_type != b"E", message
++                if message_type == b"D":
++                    rows.append(message)
++                if message_type == b"Z":
++                    break
++            assert rows == [struct.pack("!HI", 1, 1) + b"1"]
++        if real_ip:
++            assert f"@{real_ip}:127.0.0.1:" in bouncer.log_path.read_text()
++
++
++@pytest.mark.parametrize("sslmode", ["disable", "prefer"])
++def test_proxy_protocol_direct_connection(bouncer, sslmode):
++    bouncer.admin("set proxy_protocol = 1")
++    assert bouncer.sql_value("select 1", sslmode=sslmode, connect_timeout=3) == 1
++
++
+ @pytest.mark.parametrize("database", [b"p0", b"nonexistent_db"])
+ def test_second_startup_message_rejected(bouncer, database):
+     # An unknown database doesn't get a pool, which used to let a second

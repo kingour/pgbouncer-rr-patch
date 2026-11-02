@@ -28,4 +28,17 @@ for name in pycall route_connection rewrite_query; do
 done
 grep -q 'PYTHON_CONFIG ?= python3-config' "$workdir/Makefile"
 grep -q -- '--embed --ldflags' "$workdir/Makefile"
+grep -q 'CF_ABS("proxy_protocol"' "$workdir/src/main.c"
+grep -q 'proxy_header_parsed' "$workdir/src/client.c"
+grep -q 'proxy_client_addr' "$workdir/src/util.c"
+grep -q '^### proxy_protocol' "$workdir/doc/config.md"
+grep -q '^;proxy_protocol = 0' "$workdir/etc/pgbouncer.ini"
+grep -q '^def test_proxy_protocol(' "$workdir/test/test_misc.py"
+grep -q '^def test_proxy_protocol_direct_connection(' "$workdir/test/test_misc.py"
+grep -q '^def test_proxy_with_routing_and_rewrite(' "$workdir/test/test_proxy_rr.py"
+grep -q '^.claude$' "$workdir/.gitignore"
+if [ -f "$workdir/dev/format.sh" ]; then
+    grep -q -- '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' "$workdir/dev/format.sh"
+fi
+(cd "$workdir" && sh etc/optscan.sh)
 echo "PASS: installer applied to $revision with all extension build inputs"

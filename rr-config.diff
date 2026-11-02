@@ -1,0 +1,44 @@
+--- a/doc/config.md
++++ b/doc/config.md
+@@ -59,6 +59,27 @@
+ otherwise supply arbitrary source addresses in their headers.
+ 
+ Default: 0 (disabled)
++
++### rewrite_query_disconnect_on_failure
++
++Disconnect the client when the Python query rewriting function fails if set
++to `true`. This setting is provided by the pgbouncer-rr extension.
++
++Default: false
++
++### rewrite_query_py_module_file
++
++Path to the Python module defining `rewrite_query(username, query,
++in_transaction)`. `not_enabled` disables query rewriting.
++
++Default: not_enabled
++
++### routing_rules_py_module_file
++
++Path to the Python module defining `routing_rules(username, query,
++in_transaction)`. `not_enabled` disables query routing.
++
++Default: not_enabled
+ 
+ ### unix_socket_dir
+ 
+--- a/etc/pgbouncer.ini
++++ b/etc/pgbouncer.ini
+@@ -60,6 +60,11 @@
+ ;; Enable only for connections from trusted proxies; direct clients still work.
+ ;proxy_protocol = 0
+ 
++;; Optional pgbouncer-rr Python query rewriting and routing.
++;rewrite_query_disconnect_on_failure = false
++;rewrite_query_py_module_file = not_enabled
++;routing_rules_py_module_file = not_enabled
++
+ ;; On Debian it should be /var/run/postgresql
+ ;unix_socket_dir = /tmp
+ ;unix_socket_mode = 0777
