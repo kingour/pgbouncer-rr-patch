@@ -1,20 +1,27 @@
-diff --git a/src/main.c b/src/main.c
-index dae779f..ad6c3c1 100644
 --- a/src/main.c
 +++ b/src/main.c
-@@ -176,6 +176,11 @@ int cf_log_disconnections;
- int cf_log_pooler_errors;
+@@ -185,6 +185,12 @@
  int cf_application_name_add_host;
+ int cf_proxy_protocol;
  
 +/* pgbouncer-rr extension */
 +char *cf_routing_rules_py_module_file;
 +char *cf_rewrite_query_py_module_file;
 +char *cf_rewrite_query_disconnect_on_failure;
++char *cf_log_audit;
 +
  int cf_client_tls_sslmode;
  char *cf_client_tls_protocols;
  char *cf_client_tls_ca_file;
-@@ -297,6 +302,10 @@ static const struct CfKey bouncer_params [] = {
+@@ -293,6 +299,7 @@
+ 	CF_ABS("listen_addr", CF_STR, cf_listen_addr, CF_NO_RELOAD, ""),
+ 	CF_ABS("listen_backlog", CF_INT, cf_listen_backlog, CF_NO_RELOAD, "128"),
+ 	CF_ABS("listen_port", CF_INT, cf_listen_port, CF_NO_RELOAD, "6432"),
++	CF_ABS("log_audit", CF_STR, cf_log_audit, 0, "false"),
+ 	CF_ABS("log_connections", CF_INT, cf_log_connections, 0, "1"),
+ 	CF_ABS("log_disconnections", CF_INT, cf_log_disconnections, 0, "1"),
+ 	CF_ABS("log_pooler_errors", CF_INT, cf_log_pooler_errors, 0, "1"),
+@@ -319,6 +326,10 @@
  	CF_ABS("reserve_pool_size", CF_INT, cf_res_pool_size, 0, "0"),
  	CF_ABS("reserve_pool_timeout", CF_TIME_USEC, cf_res_pool_timeout, 0, "5"),
  	CF_ABS("resolv_conf", CF_STR, cf_resolv_conf, CF_NO_RELOAD, ""),
@@ -23,5 +30,5 @@ index dae779f..ad6c3c1 100644
 +	CF_ABS("rewrite_query_py_module_file", CF_STR, cf_rewrite_query_py_module_file, 0, "not_enabled"),
 +	CF_ABS("routing_rules_py_module_file", CF_STR, cf_routing_rules_py_module_file, 0, "not_enabled"),
  	CF_ABS("sbuf_loopcnt", CF_INT, cf_sbuf_loopcnt, 0, "5"),
+ 	CF_ABS("scram_iterations", CF_INT, cf_scram_iterations, 0, SCRAM_DEFAULT_ITERATIONS),
  	CF_ABS("server_check_delay", CF_TIME_USEC, cf_server_check_delay, 0, "30"),
- 	CF_ABS("server_check_query", CF_STR, cf_server_check_query, 0, "select 1"),

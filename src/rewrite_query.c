@@ -83,6 +83,11 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 	    slog_debug(client, "rewrite_query: Username => %s, Orig Query=> %s",
 		       client->login_user_credentials->name, loggable_query_str);
 	    free(loggable_query_str);
+	} else if (strcmp(cf_log_audit, "true") == 0) {
+	    loggable_query_str = strip_newlines(query_str);
+	    slog_info(client, "rewrite_query: Username => %s, Orig Query=> %s",
+	              client->login_user_credentials->name, loggable_query_str);
+	    free(loggable_query_str);
 	}
 
 	/* call python function to rewrite the query */

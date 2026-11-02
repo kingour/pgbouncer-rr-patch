@@ -1,14 +1,3 @@
-diff --git a/.gitignore b/.gitignore
-index cf90354..18c4345 100644
---- a/.gitignore
-+++ b/.gitignore
-@@ -40,3 +40,6 @@ venv
- /uncrustify
- 
- __pycache__/
-+.idea
-+.omc
-+.claude
 diff --git a/doc/config.md b/doc/config.md
 index 70c3fbb..02b2e2a 100644
 --- a/doc/config.md

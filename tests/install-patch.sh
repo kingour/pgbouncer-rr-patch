@@ -36,7 +36,6 @@ grep -q '^;proxy_protocol = 0' "$workdir/etc/pgbouncer.ini"
 grep -q '^def test_proxy_protocol(' "$workdir/test/test_misc.py"
 grep -q '^def test_proxy_protocol_direct_connection(' "$workdir/test/test_misc.py"
 grep -q '^def test_proxy_with_routing_and_rewrite(' "$workdir/test/test_proxy_rr.py"
-grep -q '^.claude$' "$workdir/.gitignore"
 if [ -f "$workdir/dev/format.sh" ]; then
     grep -q -- '-DCMAKE_POLICY_VERSION_MINIMUM=3.5' "$workdir/dev/format.sh"
 fi

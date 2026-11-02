@@ -32,9 +32,9 @@ patchstatus=0
 # an upstream tree or a tree that already contains the complete custom patch.
 apply_custom_patch() {
    local patchfile="$PATCHDIR/$1"
-   if git -C "$PGDIR" apply --check "$patchfile" >/dev/null 2>&1; then
-      git -C "$PGDIR" apply "$patchfile" || return 1
-   elif git -C "$PGDIR" apply --reverse --check "$patchfile" >/dev/null 2>&1; then
+   if (cd "$PGDIR" && git apply --check "$patchfile") >/dev/null 2>&1; then
+      (cd "$PGDIR" && git apply "$patchfile") || return 1
+   elif (cd "$PGDIR" && git apply --reverse --check "$patchfile") >/dev/null 2>&1; then
       echo "Already installed: $1"
    else
       echo "Cannot apply $1: target contains incompatible or partial changes." >&2

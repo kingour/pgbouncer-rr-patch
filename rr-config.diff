@@ -1,9 +1,15 @@
 --- a/doc/config.md
 +++ b/doc/config.md
-@@ -59,6 +59,27 @@
+@@ -59,6 +59,33 @@
  otherwise supply arbitrary source addresses in their headers.
  
  Default: 0 (disabled)
++
++### log_audit
++
++Log original queries at INFO level when query rewriting is enabled.
++
++Default: false
 +
 +### rewrite_query_disconnect_on_failure
 +
@@ -30,11 +36,12 @@
  
 --- a/etc/pgbouncer.ini
 +++ b/etc/pgbouncer.ini
-@@ -60,6 +60,11 @@
+@@ -60,6 +60,12 @@
  ;; Enable only for connections from trusted proxies; direct clients still work.
  ;proxy_protocol = 0
  
 +;; Optional pgbouncer-rr Python query rewriting and routing.
++;log_audit = false
 +;rewrite_query_disconnect_on_failure = false
 +;rewrite_query_py_module_file = not_enabled
 +;routing_rules_py_module_file = not_enabled
