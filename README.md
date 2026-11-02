@@ -197,10 +197,10 @@ SELECT prodname, SUM(total) FROM product_sales GROUP BY prodname ORDER BY prodna
 Download and install pgbouncer-rr by running the following commands (Amazon Linux/RHEL/CentOS):
 ```
 # install required packages - see https://github.com/pgbouncer/pgbouncer#building
-sudo yum install libevent-devel openssl-devel python-devel libtool git patch make -y
+sudo yum install libevent-devel openssl-devel python3-devel libtool git patch make -y
 
-# download the latest tested pgbouncer distribution - 1.23
-git clone https://github.com/pgbouncer/pgbouncer.git --branch "stable-1.23"
+# download the tested pgbouncer distribution - 1.26.1
+git clone https://github.com/pgbouncer/pgbouncer.git --branch "v1.26.1"
 
 # download pgbouncer-rr extensions
 git clone https://github.com/pchaseh/pgbouncer-rr-patch.git
@@ -218,6 +218,13 @@ git submodule update
 make
 sudo make install
 ```
+
+The Makefile patch uses `python3-config --includes` and `python3-config --embed --ldflags`
+(requires Python 3.8 or newer and its development files). To select another Python
+installation, build with `make PYTHON_CONFIG=/path/to/python3-config`.
+
+To regression-test patch installation against a local upstream checkout without
+modifying it, run `bash tests/install-patch.sh /path/to/pgbouncer v1.26.1`.
 
 **Configure**
 Create a configuration file, using `./pgbouncer-example.ini` as a starting point, adding your own database connections and python routing rules / rewrite query functions.

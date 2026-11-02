@@ -1,48 +1,43 @@
---- ../pgbouncer/Makefile	2025-12-04 02:03:14
-+++ ./Makefile	2025-12-09 16:06:23
-@@ -23,7 +23,10 @@ pgbouncer_SOURCES = \
- 	src/scram.c \
+--- a/Makefile
++++ b/Makefile
+@@ -24,6 +24,9 @@
  	src/server.c \
  	src/stats.c \
--	src/system.c \
-+    src/system.c \
+ 	src/system.c \
 +	src/pycall.c \
 +	src/route_connection.c \
 +	src/rewrite_query.c \
- 	src/takeover.c \
  	src/util.c \
  	src/varcache.c \
-@@ -59,6 +62,9 @@ pgbouncer_SOURCES = \
+ 	src/common/sha2.c \
+@@ -58,6 +61,9 @@
  	include/server.h \
  	include/stats.h \
  	include/system.h \
 +	include/pycall.h \
 +	include/route_connection.h \
 +	include/rewrite_query.h \
- 	include/takeover.h \
  	include/util.h \
  	include/varcache.h \
-@@ -83,7 +89,8 @@ pgbouncer_SOURCES = \
+ 	include/common/ascii.h \
+@@ -81,7 +87,10 @@
  	include/common/uthash.h \
  	include/common/uthash_lowercase.h
  
 -pgbouncer_CPPFLAGS = -Iinclude $(CARES_CFLAGS) $(LIBEVENT_CFLAGS) $(TLS_CPPFLAGS)
-+python_CPPFLAGS = -I/usr/include/python3.9 -I/usr/include/python3.9
++PYTHON_CONFIG ?= python3-config
++python_CPPFLAGS = $(shell $(PYTHON_CONFIG) --includes)
++python_LDFLAGS = $(shell $(PYTHON_CONFIG) --embed --ldflags | sed 's/-framework /-Wl,-framework,/g')
 +pgbouncer_CPPFLAGS = -Iinclude $(CARES_CFLAGS) $(LIBEVENT_CFLAGS) $(TLS_CPPFLAGS) $(python_CPPFLAGS)
  
  # include libusual sources directly
  AM_FEATURES = libusual
-@@ -102,10 +109,12 @@ dist_man_MANS = doc/pgbouncer.1 doc/pgbouncer.5
- DIST_SUBDIRS = doc test
+@@ -101,7 +110,7 @@
  dist_man_MANS = doc/pgbouncer.1 doc/pgbouncer.5
  
-+python_LDFLAGS = -lpthread -ldl -lutil -lm -lpython3.9 -Xlinker -export-dynamic
  pgbouncer_LDFLAGS := $(TLS_LDFLAGS)
 -pgbouncer_LDADD := $(CARES_LIBS) $(LIBEVENT_LIBS) $(TLS_LIBS) $(LIBS)
 +pgbouncer_LDADD := $(CARES_LIBS) $(LIBEVENT_LIBS) $(TLS_LIBS) $(LIBS) $(python_LDFLAGS)
  LIBS :=
  
-+
- #
- # win32
  #
