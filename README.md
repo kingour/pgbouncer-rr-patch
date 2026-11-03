@@ -6,7 +6,26 @@ This repository is a fork of [pgbouncer-fast-switchover](https://github.com/awsl
 As such, I claim no credit with regards to pgbouncer-rr. All rights are held by Amazon, and my sole intent is to bring the routing/rewriting functionality provided by the original authors to newer pgbouncer versions.
 
 ## Support
-This patch currently targets pgbouncer 1.23
+
+This branch targets PgBouncer 1.26.1 and the 1.26 development sources.
+The RR extension uses the Autoconf/Makefile build; the installer does not
+integrate Python embedding or RR sources into Meson.
+
+The installer applies these patches in order:
+
+| Patch | Purpose |
+| --- | --- |
+| `proxy-protocol.diff` | Optional PROXY protocol v1 headers, reported client IP logging, configuration examples and eight regression cases. Also adds local tool ignore rules. |
+| `rr-config.diff` | Documents and adds sample settings for Python query rewriting and routing. |
+| `format-cmake.diff` | Allows the pinned formatter to build with CMake 4; applied only when `dev/format.sh` exists. |
+| `Makefile.diff`, `src/client.c.diff`, `src/main.c.diff`, `include/bouncer.h.diff` | Registers RR configuration, hooks rewriting and routing into query processing, and adds the extension sources and Python embedding flags to the build. |
+
+It then copies the RR sources, examples, README and supporting files into the
+PgBouncer tree, plus `test/test_proxy_rr.py` for integration testing.
+Use a disposable checkout or back up the target first: installation modifies
+files in place and does not roll back changes on failure. Complete custom
+patches can be detected and skipped, but the RR installation as a whole is not
+idempotent. Use a fresh tree for another installation attempt.
 
 ## Overview
 
@@ -139,7 +158,7 @@ The file should contain the python function:
 
 Implementing a query rewrite function is straightforward when the incoming application queries have fixed formats that are easily detectable and easily manipulated, perhaps using regular expression search/replace logic in the Python function. It is much more challenging to build a robust rewrite function to handle SQL statements with arbitrary format and complexity.
 
-Enabling the query rewrite function triggers pgbouncer-rr to enforce that a complete query is contained in the incoming client socket buffer. Long queries are often split across multiple network packets; they should all be in the buffer before the rewrite function is called. This requires that the buffer size be large enough to accommodate the largest query. The default buffer size (2048) is likely too small, so specify a much larger size in the configuration: `pkt_buf = 32768`
+Enabling the query rewrite function triggers pgbouncer-rr to enforce that a complete query is contained in the incoming client socket buffer. Long queries are often split across multiple network packets; they should all be in the buffer before the rewrite function is called. This requires that the buffer size be large enough to accommodate the largest query. The default buffer size (4096) is likely too small, so specify a much larger size in the configuration: `pkt_buf = 32768`
 
 If a partially received query is detected, and there is room in the buffer for the remainder of the query, pgbouncer-rr waits for the remaining packets to be received before processing the query. If the buffer is not large enough for the incoming query, or if it is not large enough to hold the re-written query (which may be longer than the original), then the rewrite function will fail. By default, the failure is logged, and the original query string will be passed to the server unchanged. You can force the client connection to terminate instead, by setting:  `rewrite_query_disconnect_on_failure = true`.
 
@@ -197,13 +216,13 @@ SELECT prodname, SUM(total) FROM product_sales GROUP BY prodname ORDER BY prodna
 Download and install pgbouncer-rr by running the following commands (Amazon Linux/RHEL/CentOS):
 ```
 # install required packages - see https://github.com/pgbouncer/pgbouncer#building
-sudo yum install libevent-devel openssl-devel python-devel libtool git patch make -y
+sudo yum install gcc libevent-devel openssl-devel python3-devel autoconf automake libtool git patch make pandoc -y
 
-# download the latest tested pgbouncer distribution - 1.23
-git clone https://github.com/pgbouncer/pgbouncer.git --branch "stable-1.23"
+# download PgBouncer 1.26.1
+git clone https://github.com/pgbouncer/pgbouncer.git --branch "pgbouncer_1_26_1"
 
 # download pgbouncer-rr extensions
-git clone https://github.com/pchaseh/pgbouncer-rr-patch.git
+git clone --branch pgbouncer_v1.26.x https://github.com/kingour/pgbouncer-rr-patch.git
 
 # merge pgbouncer-rr extensions into pgbouncer code
 cd pgbouncer-rr-patch
@@ -214,17 +233,39 @@ cd ../pgbouncer
 git submodule init
 git submodule update
 ./autogen.sh
-./configure ...
+./configure
 make
 sudo make install
 ```
+
+The Makefile patch defaults to `python3-config`. It obtains headers with
+`--includes`, tries `--embed --ldflags` for Python 3.8+, and falls back to
+`--ldflags` for older Python, including Python 2.7 and 3.6. Configuration failures
+stop Make instead of silently dropping the embedding flags. Install the matching
+Python development headers and library.
+
+On CentOS 7, select the existing installation explicitly, for example:
+
+```bash
+make PYTHON_CONFIG=/usr/bin/python2.7-config
+# Or, for an installed Python 3.6 development package:
+make PYTHON_CONFIG=/usr/bin/python3.6-config
+```
+
+Use the actual config-tool path provided by your development package. Remove
+build-script logic that rewrites Python version strings in `Makefile.diff`;
+pass `PYTHON_CONFIG` to Make instead. Do not change the system `python` symlink.
+When switching Python installations, run `make clean` before rebuilding. Check
+`ldd ./pgbouncer` on CentOS for missing runtime libraries. These flags support
+legacy Python selection; they do not replace a CentOS 7 build/runtime test.
 
 **Configure**
 Create a configuration file, using `./pgbouncer-example.ini` as a starting point, adding your own database connections and python routing rules / rewrite query functions.
 
 Set up user authentication - see [authentication file format](https://pgbouncer.github.io/config.html#authentication-file-format). NOTE: the recently added pgbouncer `auth_query` feature will unfortunately not work with Amazon Redshift.
 
-By default, pgbouncer-rr does not support SSL/TLS connections. However, you can experiment with pgbouncer's newest [TLS/SSL feature](https://github.com/pgbouncer/pgbouncer/blob/master/doc/config.rst#tls-settings). Just add a private key and certificate to your pgbouncer-rr configuration:
+Build PgBouncer with OpenSSL support to use TLS. Configure a client-facing
+private key and certificate in the `[pgbouncer]` section:
 ```
 client_tls_sslmode=allow
 client_tls_key_file = ./pgbouncer-rr-key.key
@@ -257,7 +298,78 @@ Example – JDBC driver URL (Redshift driver)
 ```
 jdbc:redshift://pgbouncer-dnshostname:5439/dev
 ```
+## PROXY protocol v1
+
+PROXY header parsing is disabled by default. Enable it in `[pgbouncer]` when
+PgBouncer receives connections from a trusted proxy that sends PROXY v1 headers:
+
+```ini
+[pgbouncer]
+proxy_protocol = 1
+```
+
+The patch handles optional `TCP4`, `TCP6` and `UNKNOWN` headers, including
+fragmented headers. Direct PostgreSQL clients and SSL negotiation still work
+when enabled. PROXY protocol v2 is not implemented by this patch.
+
+For a header reporting `192.0.2.20` from a proxy connected at `127.0.0.1`,
+connection log prefixes include `@192.0.2.20:127.0.0.1:<peer-port>`.
+The reported address affects logging only; authentication and access control
+continue to use the connection's actual peer address. Restrict the listener to
+trusted proxies before enabling this setting, because clients can supply their
+own reported addresses.
+
+## Verification
+
+From the patch repository, test installation against a local upstream Git
+revision without modifying that checkout:
+
+```bash
+bash tests/install-patch.sh /path/to/pgbouncer pgbouncer_1_26_1
+# Or test a local branch/revision explicitly:
+bash tests/install-patch.sh /path/to/pgbouncer develop
+python3 tests/python-config.py
+```
+
+The revision must exist in the local upstream repository. This check applies the
+installer in a temporary directory and checks extension inputs and configuration
+consistency; it does not compile or start PgBouncer.
+
+After installing the patch and compiling, run integration tests from the patched
+PgBouncer directory. Use Python 3.9 or newer for the upstream test tooling, and
+install PostgreSQL server/client tools (`initdb`, `pg_ctl`, `postgres`, `psql`,
+`pg_config`) on `PATH`. Run as a non-root user with permission to bind local test
+ports. The tests create temporary PostgreSQL and PgBouncer instances.
+
+```bash
+python3 -m venv /tmp/pgbouncer-test-venv
+. /tmp/pgbouncer-test-venv/bin/activate
+python -m pip install pytest pytest-asyncio pytest-timeout pytest-xdist psycopg filelock
+python -m pytest test/test_misc.py -k proxy_protocol -q
+python -m pytest test/test_proxy_rr.py -q
+make -C test check
+```
+
+The PROXY suite has eight cases covering TCP4/TCP6/UNKNOWN headers, fragmentation,
+direct connections and SSL negotiation. The RR integration suite has four cases
+combining direct/proxied clients with rewriting and optional routing.
+`make -C test check` runs the HBA unit test. On macOS with Homebrew OpenSSL,
+that test may need explicit flags:
+
+```bash
+make -C test check CPPFLAGS=-I/opt/homebrew/opt/openssl@3/include LDFLAGS=-L/opt/homebrew/opt/openssl@3/lib
+```
+
+The latest local verification used upstream `develop` commit `bb60c8c` (reporting
+version 1.26.1): patch installation, compilation, the HBA unit test and all 12
+PROXY/RR integration cases passed. This is a targeted check, not a full upstream
+test-suite result.
+
 ## Deploy pgbouncer in Elastic Kubernetes Service (EKS)
+
+The following deployment examples are retained from develop. They have not been
+validated with the 1.26 patches; check the PgBouncer revision and Python build
+settings in the Docker scripts before using them.
 
 ### Dockerization and deployment considerations
 We choose to deploy PGBouncer as a container on [Amazon Elastic Kubernetes Service (EKS)](https://aws.amazon.com/eks/) to allow it to horizontally scale to the Redshift or Postgresql client load. We first containerized and stored the image in [Amazon Elastic Container Registry (ECR)](https://aws.amazon.com/ecr/); then we deployed Kubernetes (1) [Deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) and (2) [Service](https://kubernetes.io/docs/concepts/services-networking/service/). The Kubernetes Deployment,[pgbouncer-deploy.yaml](./pgbouncer-deploy.yaml) defines the PGBouncer configuration, such as logging or the location of routing rules, as well as Redshift and Postgresql database cluster endpoint credentials. The startup script [start.sh](./start.sh) generates the `pgbouncer.ini` upon the PGBouncer container init (so don't look for it here)

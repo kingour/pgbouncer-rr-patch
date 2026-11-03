@@ -23,7 +23,7 @@ index 15bb44f..e4fefda 100644
  		client->pool->stats.xact_count++;
  		client->xact_start = client->query_start;
  	}
-@@ -1504,6 +1508,13 @@ static bool handle_client_work(PgSocket *client, PktHdr *pkt)
+@@ -1504,6 +1508,14 @@ static bool handle_client_work(PgSocket *client, PktHdr *pkt)
  	if (client->pool->db->admin)
  		return admin_handle_client(client, pkt);
  
@@ -31,7 +31,8 @@ index 15bb44f..e4fefda 100644
 +	if (pkt->type == 'Q' || pkt->type == 'P') {
 +		if (!rewrite_query(client, in_transaction, pkt))
 +			return false;
-+		route_client_connection(client, in_transaction, pkt);
++		if (!route_client_connection(client, in_transaction, pkt))
++			return false;
 +	}
 +
  	/* acquire server */

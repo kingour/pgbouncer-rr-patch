@@ -28,6 +28,26 @@ PGDIR=$1
 PATCHDIR=$(pwd)
 patchstatus=0
 
+# Keep the local PgBouncer customizations separate from the RR hooks. Accept
+# an upstream tree or a tree that already contains the complete custom patch.
+apply_custom_patch() {
+   local patchfile="$PATCHDIR/$1"
+   if (cd "$PGDIR" && git apply --check "$patchfile") >/dev/null 2>&1; then
+      (cd "$PGDIR" && git apply "$patchfile") || return 1
+   elif (cd "$PGDIR" && git apply --reverse --check "$patchfile") >/dev/null 2>&1; then
+      echo "Already installed: $1"
+   else
+      echo "Cannot apply $1: target contains incompatible or partial changes." >&2
+      return 1
+   fi
+}
+
+apply_custom_patch proxy-protocol.diff || exit 1
+apply_custom_patch rr-config.diff || exit 1
+if [ -f "$PGDIR/dev/format.sh" ]; then
+   apply_custom_patch format-cmake.diff || exit 1
+fi
+
 # Patch each modified file
 MERGEFILES="\
    Makefile\
@@ -69,6 +89,7 @@ do
    cp $PATCHDIR/$file $PGDIR/$file || patchstatus=1
 done
 echo
+cp "$PATCHDIR/tests/test_proxy_rr.py" "$PGDIR/test/test_proxy_rr.py" || patchstatus=1
 
 if [ $patchstatus -eq 1 ]; then
    echo "Failures encountered during merge of pgbouncer-rr with pgbouncer."
@@ -76,8 +97,8 @@ if [ $patchstatus -eq 1 ]; then
    echo "Possible causes: "
    echo "   pgbouncer-rr-patch already installed in target directory?"
    echo "   new version of pgbouncer with changed source files that can't be patched?"
-   echo "      - last tested with pgbouncer v1.23.1"
-   echo "      - Try getting pgbouncer with: git clone https://github.com/pgbouncer/pgbouncer.git --branch \"stable-1.23\""
+   echo "      - last tested with pgbouncer v1.26.1"
+   echo "      - Try getting pgbouncer with: git clone https://github.com/pgbouncer/pgbouncer.git --branch \"stable-1.26\""
    echo "Status: pgbouncer-rr-patch merge FAILED"
 else
    echo "Status: pgbouncer-rr-patch merge SUCEEDED"
