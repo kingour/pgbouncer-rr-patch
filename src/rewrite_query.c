@@ -45,6 +45,7 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 	char *remaining_buffer_ptr;
 	int new_pkt_len, remaining_buffer_len;
 	int i;
+	bool python_failed;
 
 	if (!is_rewrite_enabled(client)) return true;
 	switch (handle_incomplete_packet(client, pkt)) {
@@ -92,7 +93,11 @@ bool rewrite_query(PgSocket *client, int in_transaction, PktHdr *pkt) {
 
 	/* call python function to rewrite the query */
 	tmp_new_query_str = pycall(client, client->login_user_credentials->name, query_str, in_transaction, cf_rewrite_query_py_module_file,
-			"rewrite_query");
+			"rewrite_query", &python_failed);
+	if (python_failed) {
+		disconnect_client(client, true, "Python query rewrite failed");
+		return false;
+	}
 	if (tmp_new_query_str == NULL || strcmp(tmp_new_query_str, query_str) == 0) {
 		slog_debug(client, "query unchanged");
 		free(tmp_new_query_str);

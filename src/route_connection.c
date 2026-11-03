@@ -34,6 +34,7 @@ bool route_client_connection(PgSocket *client, int in_transaction, PktHdr *pkt) 
 	char *dbname;
 	PgDatabase *db;
 	PgPool *pool;
+	bool python_failed;
 
 	/* extract query string from packet */
 	/* first byte is the packet type (which we already know)
@@ -67,10 +68,14 @@ bool route_client_connection(PgSocket *client, int in_transaction, PktHdr *pkt) 
 	}
 
 	dbname = pycall(client, client->login_user_credentials->name, query_str, in_transaction, cf_routing_rules_py_module_file,
-			"routing_rules");
+			"routing_rules", &python_failed);
+	if (python_failed) {
+		disconnect_client(client, true, "Python routing failed");
+		return false;
+	}
 	if (dbname == NULL) {
 		slog_debug(client, "routing_rules returned 'None' - existing connection preserved");
-		return false;
+		return true;
 	}
 
 	db = find_database(dbname);
@@ -80,10 +85,18 @@ bool route_client_connection(PgSocket *client, int in_transaction, PktHdr *pkt) 
 				dbname);
 		slog_error(client, "check ini and/or routing rules function");
 		free(dbname);
+		disconnect_client(client, true, "Invalid routing database key");
 		return false;
 	}
 	pool = get_pool(db, client->login_user_credentials);
 	if (client->pool != pool) {
+        /* ready means ReadyForQuery(I); idle_tx or a busy server must stay pinned.
+         * xact_start alone also covers a first query waiting for a server. */
+        if (client->link && (!client->link->ready || client->link->idle_tx)) {
+            free(dbname);
+            disconnect_client(client, true, "Cannot change backend during a transaction or pending query");
+            return false;
+        }
 		if (client->link != NULL) {
 			/* release existing server connection back to pool */
 			slog_debug(client, "releasing existing server connection");
