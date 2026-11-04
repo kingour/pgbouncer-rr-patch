@@ -1,4 +1,3 @@
-*.secrets
 HELP.md
 !**/src/main/**
 !**/src/test/**

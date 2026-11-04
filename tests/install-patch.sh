@@ -26,6 +26,13 @@ for name in pycall route_connection rewrite_query; do
     grep -q "src/$name.c" "$workdir/Makefile"
     grep -q "include/$name.h" "$workdir/Makefile"
 done
+for file in README.md LICENSE.txt NOTICE.txt pgbouncer-example.ini users.txt rewrite_query.py routing_rules.py; do
+    cmp "$patchdir/$file" "$workdir/$file"
+done
+cmp "$patchdir/tests/test_proxy_rr.py" "$workdir/test/test_proxy_rr.py"
+grep -q 'CF_ABS("log_audit"' "$workdir/src/main.c"
+grep -q '^### log_audit' "$workdir/doc/config.md"
+grep -q '^;log_audit = false' "$workdir/etc/pgbouncer.ini"
 grep -q 'PYTHON_CONFIG ?= python3-config' "$workdir/Makefile"
 grep -q -- '--embed --ldflags' "$workdir/Makefile"
 grep -q 'CF_ABS("proxy_protocol"' "$workdir/src/main.c"

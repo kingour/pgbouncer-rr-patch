@@ -63,7 +63,6 @@ done
 
 
 # copy pgbouncer-rr source files
-mkdir -p $PGDIR/images
 NEWFILES="\
    README.md\
    LICENSE.txt\
@@ -72,9 +71,6 @@ NEWFILES="\
    users.txt\
    rewrite_query.py\
    routing_rules.py\
-   images/diagram1.jpg\
-   images/diagram2-routing.jpg\
-   images/diagram3-rewrite.jpg\
    src/pycall.c\
    src/rewrite_query.c\
    src/route_connection.c\

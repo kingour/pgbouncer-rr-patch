@@ -1,6 +1,6 @@
 --- a/doc/config.md
 +++ b/doc/config.md
-@@ -59,6 +59,33 @@
+@@ -59,6 +59,36 @@
  otherwise supply arbitrary source addresses in their headers.
  
  Default: 0 (disabled)
@@ -8,13 +8,16 @@
 +### log_audit
 +
 +Log original queries at INFO level when query rewriting is enabled.
++Verbose mode uses DEBUG instead. This does not log bound parameter values.
 +
 +Default: false
 +
 +### rewrite_query_disconnect_on_failure
 +
-+Disconnect the client when the Python query rewriting function fails if set
-+to `true`. This setting is provided by the pgbouncer-rr extension.
++Disconnect the client when a query or rewritten query exceeds the packet
++buffer if set to `true`; otherwise preserve the original query.
++Python callback errors and invalid return types always disconnect the client,
++regardless of this setting. Provided by the pgbouncer-rr extension.
 +
 +Default: false
 +
