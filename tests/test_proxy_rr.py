@@ -174,3 +174,5 @@ def test_rr_audit_original_sql(bouncer, rewrite, audit, verbose, level):
     else:
         assert len(lines) == 1
         assert f" {level} " in lines[0]
+        assert "rewrite_query: Orig Query=> select 42 /* rr_audit_original */" in lines[0]
+        assert "Username =>" not in lines[0]

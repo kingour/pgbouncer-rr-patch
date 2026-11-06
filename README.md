@@ -151,12 +151,12 @@ rewrite_query_py_module_file = /etc/pgbouncer/rewrite_query.py
 log_audit = true
 ```
 
-Auditing currently runs within the rewrite path. It records the username and original SQL before calling Python, replacing newlines with spaces. Queries do not reach this log point when rewriting is disabled, the packet is incomplete, or earlier processing skips the query. To log without changing SQL, have `rewrite_query` return `None`.
+Auditing currently runs within the rewrite path. It records the original SQL before calling Python, replacing newlines with spaces. The username is already present in the PgBouncer connection prefix. Queries do not reach this log point when rewriting is disabled, the packet is incomplete, or earlier processing skips the query. To log without changing SQL, have `rewrite_query` return `None`.
 
 With verbose mode disabled, `log_audit = true` emits an INFO-level log. Verbose mode takes the DEBUG logging branch instead. Rewritten SQL also has DEBUG logging. Example:
 
 ```text
-LOG ... rewrite_query: Username => app_user, Orig Query=> SELECT 1
+LOG ... rewrite_query: Orig Query=> SELECT 1
 ```
 
 Logs use PgBouncer's existing outputs and connection prefixes. They do not include full Bind parameter values, query results, or execution-time auditing. Original SQL can contain application data; configure log access and retention for your use case.
